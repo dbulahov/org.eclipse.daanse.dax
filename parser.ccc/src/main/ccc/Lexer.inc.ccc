@@ -19,6 +19,15 @@ TOKEN :
    < EVALUATE : "EVALUATE" >
 ;
 
+// Boolean literals share the BooleanLiteral node class: each token
+// occurrence becomes a BooleanLiteral node, distinguished at runtime by its
+// own token type (TRUE vs. FALSE).
+TOKEN #Literal :
+   < TRUE : "true" > #BooleanLiteral
+   |
+   < FALSE : "false" > #BooleanLiteral
+;
+
 TOKEN #Delimiter :
    < LBRACE : "{" >
    |
@@ -39,6 +48,22 @@ TOKEN :
    < STRING_LITERAL : "\"" ( <DOUBLED_QUOTE> | ~["\""] )* "\"" > #StringLiteral
 ;
 
+// A DAX date/time literal, e.g. dt"2024-01-31T10:30:00" or the date-only
+// dt"2024-01-31". No embedded-quote escaping: date/time values never
+// contain a double quote.
+TOKEN :
+   < DATE_TIME_LITERAL : "dt" "\"" (~["\""])* "\"" > #DateTimeLiteral
+;
+
+// A DAX numeric literal, e.g. 42 or 3.14. No leading sign and no exponent
+// notation yet; those belong to unary/binary expression grammar once it
+// exists.
+TOKEN :
+   < #DIGIT : ["0"-"9"] >
+   |
+   < NUMERIC_LITERAL : (<DIGIT>)+ ("." (<DIGIT>)+)? > #NumericLiteral
+;
+
 INJECT PARSER_CLASS :
 {
    /**
@@ -49,6 +74,19 @@ INJECT PARSER_CLASS :
    public static String stripQuotes(String image) {
       String inner = image.substring(1, image.length() - 1);
       return inner.replace("\"\"", "\"");
+   }
+
+   /**
+    * Parses a {@link #DATE_TIME_LITERAL} token image (the {@code dt"..."}
+    * form) into a {@link java.time.LocalDateTime}, defaulting to midnight
+    * when only a date is given.
+    */
+   public static java.time.LocalDateTime parseDateTimeLiteral(String image) {
+      String inner = image.substring(3, image.length() - 1);
+      if (inner.indexOf('T') >= 0) {
+         return java.time.LocalDateTime.parse(inner);
+      }
+      return java.time.LocalDate.parse(inner).atStartOfDay();
    }
 }
 
@@ -61,6 +99,43 @@ INJECT StringLiteral :
    public String value() {
       if (value == null) {
          value = stripQuotes(getImage());
+      }
+      return value;
+   }
+}
+
+INJECT BooleanLiteral :
+   implements org.eclipse.daanse.dax.model.api.expression.BooleanLiteral
+{
+   public boolean value() {
+      return getType() == TokenType.TRUE;
+   }
+}
+
+INJECT NumericLiteral :
+   import java.math.BigDecimal;
+   implements org.eclipse.daanse.dax.model.api.expression.NumericLiteral
+{
+   private BigDecimal value;
+
+   public BigDecimal value() {
+      if (value == null) {
+         value = new BigDecimal(getImage());
+      }
+      return value;
+   }
+}
+
+INJECT DateTimeLiteral :
+   import java.time.LocalDateTime;
+   import static org.eclipse.daanse.dax.parser.ccc.DaxParser.parseDateTimeLiteral;
+   implements org.eclipse.daanse.dax.model.api.expression.DateTimeLiteral
+{
+   private LocalDateTime value;
+
+   public LocalDateTime value() {
+      if (value == null) {
+         value = parseDateTimeLiteral(getImage());
       }
       return value;
    }

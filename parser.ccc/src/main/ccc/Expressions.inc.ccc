@@ -50,12 +50,19 @@ RowConstructor#RowConstructor :
 ;
 
 // Void: an expression is always represented by whichever concrete node
-// matched (TableConstructor or StringLiteral today); no separate wrapper
-// node is created.
+// matched; no separate wrapper node is created.
 Expression#void :
    TableConstructor
    |
    < STRING_LITERAL >
+   |
+   < NUMERIC_LITERAL >
+   |
+   < TRUE >
+   |
+   < FALSE >
+   |
+   < DATE_TIME_LITERAL >
 ;
 
 // Entry point for DaxParser#parseExpression(): parses one expression and

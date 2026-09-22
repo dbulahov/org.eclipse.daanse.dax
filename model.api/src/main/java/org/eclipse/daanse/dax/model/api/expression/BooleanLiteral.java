@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Contributors to the Eclipse Foundation.
+ * Copyright (c) 2025 Contributors to the Eclipse Foundation.
  *
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
@@ -13,11 +13,12 @@
 package org.eclipse.daanse.dax.model.api.expression;
 
 /**
- * Root interface of all DAX expressions.
- * <p>
- * The interface is sealed over the expression kinds produced by the parser
- * </p>
+ * A boolean literal, {@code TRUE()} or {@code FALSE()} in DAX source.
  */
-public sealed interface DaxExpression permits Literal, TableConstructor {
+public non-sealed interface BooleanLiteral extends Literal {
 
+    /**
+     * @return the boolean value
+     */
+    boolean value();
 }

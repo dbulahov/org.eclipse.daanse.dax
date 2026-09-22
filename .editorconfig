@@ -18,6 +18,9 @@ indent_size = 2
 [{LICENSE,*.md,*.g4}]
 indent_size = unset
 
+[{Lexer.inc.ccc,Expressions.inc.ccc}]
+indent_size = unset
+
 [*.bndrun]
 indent_style = tab
 insert_final_newline = false

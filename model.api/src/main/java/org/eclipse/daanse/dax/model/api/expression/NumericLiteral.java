@@ -12,16 +12,15 @@
  */
 package org.eclipse.daanse.dax.model.api.expression;
 
-/**
- * A constant value in a DAX expression.
- * <p>
- * Sealed over the literal kinds supported by the parser:
- * {@link NumericLiteral}, {@link StringLiteral}, {@link BooleanLiteral} and
- * {@link DateTimeLiteral}.
- * AT values}.
- * </p>
- */
-public sealed interface Literal extends DaxExpression
-        permits StringLiteral, NumericLiteral, BooleanLiteral, DateTimeLiteral {
+import java.math.BigDecimal;
 
+/**
+ * A numeric literal, e.g. {@code 42} or {@code 3.14}.
+ */
+public non-sealed interface NumericLiteral extends Literal {
+
+    /**
+     * @return the numeric value, preserving the source precision
+     */
+    BigDecimal value();
 }
