@@ -8,16 +8,17 @@
  * SPDX-License-Identifier: EPL-2.0
  *
  * Contributors:
- *   Stefan Bischof (bipolis.org) - initial
+ *   dbulahov - initial
  */
-package org.eclipse.daanse.dax.model.api.expression;
+package org.eclipse.daanse.dax.model.record.expression;
+
+import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
 
 /**
- * Root interface of all DAX expressions.
- * <p>
- * The interface is sealed over the expression kinds produced by the parser
- * </p>
+ * Record implementation of {@link BooleanLiteral}.
+ *
+ * @param value
+ *            the boolean value
  */
-public sealed interface DaxExpression permits Literal, TableConstructor {
-
+public record BooleanLiteralR(boolean value) implements BooleanLiteral {
 }

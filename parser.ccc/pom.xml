@@ -99,14 +99,6 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <!-- corpus round-trip tests unparse via the AbstractUnParser; no cycle:
-           unparser.api only depends on model.api -->
-      <groupId>org.eclipse.daanse</groupId>
-      <artifactId>org.eclipse.daanse.dax.unparser.api</artifactId>
-      <version>${revision}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>org.osgi</groupId>
       <artifactId>org.osgi.service.component.annotations</artifactId>
       <scope>compile</scope>
