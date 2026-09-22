@@ -40,6 +40,27 @@ TOKEN #Delimiter :
    < COMMA : "," >
 ;
 
+// Comparison operators for BooleanExpression. All six alternatives share
+// the ComparisonOperator node class (no per-alternative #override), so
+// BooleanExpression can find the matched operator token via
+// firstChildOfType(ComparisonOperator.class) and tell which one it was via
+// getType(). Longer operators (<=, >=, <>) are matched over their shorter
+// prefixes (<, >) by the lexer's usual maximal-munch rule, so declaration
+// order here does not matter.
+TOKEN #ComparisonOperator :
+   < LESS_THAN_OR_EQUAL : "<=" >
+   |
+   < GREATER_THAN_OR_EQUAL : ">=" >
+   |
+   < NOT_EQUAL : "<>" >
+   |
+   < LESS_THAN : "<" >
+   |
+   < GREATER_THAN : ">" >
+   |
+   < EQUAL : "=" >
+;
+
 // A DAX string literal: double-quoted, where an embedded double quote is
 // escaped by doubling it, e.g. "He said ""hi""".
 TOKEN :
