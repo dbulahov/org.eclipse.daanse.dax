@@ -1,0 +1,66 @@
+/*
+* Copyright (c) 2026 Contributors to the Eclipse Foundation.
+*
+* This program and the accompanying materials are made
+* available under the terms of the Eclipse Public License 2.0
+* which is available at https://www.eclipse.org/legal/epl-2.0/
+*
+* SPDX-License-Identifier: EPL-2.0
+*
+* Contributors:
+*   Stefan Bischof (bipolis.org) - initial
+*/
+
+// DAX Expression Grammar
+
+INJECT TableConstructor :
+   implements org.eclipse.daanse.dax.model.api.expression.TableConstructor
+{
+   public java.util.List<org.eclipse.daanse.dax.model.api.expression.RowConstructor> rows() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.RowConstructor.class);
+   }
+}
+
+// #TableConstructor forces a definite node even for a single-row table,
+// e.g. {"Hello World"}, so it does not collapse to its only RowConstructor
+// child.
+TableConstructor#TableConstructor :
+   < LBRACE >
+   RowConstructor ( < COMMA > RowConstructor )*
+   < RBRACE >
+;
+
+INJECT RowConstructor :
+   implements org.eclipse.daanse.dax.model.api.expression.RowConstructor
+{
+   public java.util.List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> columns() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+// A row constructor is normally parenthesized, e.g. ("Value1", 1, TRUE);
+// DAX allows the parentheses to be omitted for a single-column row, e.g.
+// the bare "Hello World" in {"Hello World"}. #RowConstructor forces a
+// definite node in that single-column case too, so it does not collapse to
+// its only column expression.
+RowConstructor#RowConstructor :
+   < LPAREN > Expression ( < COMMA > Expression )* < RPAREN >
+   |
+   Expression
+;
+
+// Void: an expression is always represented by whichever concrete node
+// matched (TableConstructor or StringLiteral today); no separate wrapper
+// node is created.
+Expression#void :
+   TableConstructor
+   |
+   < STRING_LITERAL >
+;
+
+// Entry point for DaxParser#parseExpression(): parses one expression and
+// requires the whole input to be consumed, so trailing garbage is a syntax
+// error.
+ExpressionRoot#void :
+   Expression < EOF >
+;

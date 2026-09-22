@@ -1,0 +1,50 @@
+/*
+* Copyright (c) 2026 Contributors to the Eclipse Foundation.
+*
+* This program and the accompanying materials are made
+* available under the terms of the Eclipse Public License 2.0
+* which is available at https://www.eclipse.org/legal/epl-2.0/
+*
+* SPDX-License-Identifier: EPL-2.0
+*
+* Contributors:
+*   Stefan Bischof (bipolis.org) - initial
+*/
+
+// DAX Statement Grammar
+//   (EVALUATE expr)+
+
+INJECT DaxStatement :
+   import java.util.List;
+   implements org.eclipse.daanse.dax.model.api.DaxStatement
+{
+
+   public List<org.eclipse.daanse.dax.model.api.EvaluateStatement> evaluateStatements() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.EvaluateStatement.class);
+   }
+}
+
+// #DaxStatement forces a definite node: with SMART_NODE_CREATION a bare
+// single-EVALUATE query would otherwise collapse to its only child.
+DaxStatement#DaxStatement :
+  (EvaluateStatement)+
+  < EOF >
+;
+
+
+INJECT EvaluateStatement :
+   implements org.eclipse.daanse.dax.model.api.EvaluateStatement
+{
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression tableExpression() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+// #EvaluateStatement forces a definite node for the same reason as
+// #DaxStatement above: EVALUATE plus a single table expression would
+// otherwise collapse to just that expression.
+EvaluateStatement#EvaluateStatement :
+  < EVALUATE >
+  Expression
+;
+

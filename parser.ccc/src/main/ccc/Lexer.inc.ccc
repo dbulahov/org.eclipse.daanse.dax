@@ -1,0 +1,67 @@
+/*
+* Copyright (c) 2026 Contributors to the Eclipse Foundation.
+*
+* This program and the accompanying materials are made
+* available under the terms of the Eclipse Public License 2.0
+* which is available at https://www.eclipse.org/legal/epl-2.0/
+*
+* SPDX-License-Identifier: EPL-2.0
+*
+* Contributors:
+*   Stefan Bischof (bipolis.org) - initial
+*/
+
+// DAX Lexer Grammar
+
+SKIP : < WHITESPACE : (" " | "\t" | "\n" | "\r")+ > ;
+
+TOKEN :
+   < EVALUATE : "EVALUATE" >
+;
+
+TOKEN #Delimiter :
+   < LBRACE : "{" >
+   |
+   < RBRACE : "}" >
+   |
+   < LPAREN : "(" >
+   |
+   < RPAREN : ")" >
+   |
+   < COMMA : "," >
+;
+
+// A DAX string literal: double-quoted, where an embedded double quote is
+// escaped by doubling it, e.g. "He said ""hi""".
+TOKEN :
+   < #DOUBLED_QUOTE : "\"\"" >
+   |
+   < STRING_LITERAL : "\"" ( <DOUBLED_QUOTE> | ~["\""] )* "\"" > #StringLiteral
+;
+
+INJECT PARSER_CLASS :
+{
+   /**
+    * Strips the surrounding double quotes from a DAX
+    * {@link #STRING_LITERAL} token image and un-doubles embedded
+    * {@code ""} escapes back into a single {@code "}.
+    */
+   public static String stripQuotes(String image) {
+      String inner = image.substring(1, image.length() - 1);
+      return inner.replace("\"\"", "\"");
+   }
+}
+
+INJECT StringLiteral :
+   import static org.eclipse.daanse.dax.parser.ccc.DaxParser.stripQuotes;
+   implements org.eclipse.daanse.dax.model.api.expression.StringLiteral
+{
+   private String value;
+
+   public String value() {
+      if (value == null) {
+         value = stripQuotes(getImage());
+      }
+      return value;
+   }
+}
