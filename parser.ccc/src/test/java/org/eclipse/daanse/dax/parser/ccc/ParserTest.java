@@ -23,6 +23,7 @@ import java.time.LocalDateTime;
 
 import org.eclipse.daanse.dax.model.api.DaxStatement;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.api.expression.BooleanExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DateTimeLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
@@ -242,6 +243,81 @@ class ParserTest {
         assertThat(expr).isInstanceOf(DateTimeLiteral.class);
         DateTimeLiteral literal = (DateTimeLiteral) expr;
         assertThat(literal.value()).isEqualTo(LocalDateTime.of(2024, 1, 31, 10, 30, 0));
+    }
+
+    @Test
+    void testBooleanExpression1() throws DaxParserException {
+        String dax = "EVALUATE {5 < 6}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.LESS_THAN);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("5"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("6"));
+    }
+
+    @Test
+    void testBooleanExpression2() throws DaxParserException {
+        String dax = "EVALUATE {6 > 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.GREATER_THAN);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testBooleanExpression3() throws DaxParserException {
+        String dax = "EVALUATE {6 = 6}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.EQUAL);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("6"));
+    }
+
+    @Test
+    void testBooleanExpression4() throws DaxParserException {
+        String dax = "EVALUATE {6 >= 6}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.GREATER_THAN_OR_EQUAL);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("6"));
+    }
+
+    @Test
+    void testBooleanExpression5() throws DaxParserException {
+        String dax = "EVALUATE {6 <= 6}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.LESS_THAN_OR_EQUAL);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("6"));
     }
 
 }
