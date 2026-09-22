@@ -1,0 +1,28 @@
+/*
+* Copyright (c) 2026 Contributors to the Eclipse Foundation.
+*
+* This program and the accompanying materials are made
+* available under the terms of the Eclipse Public License 2.0
+* which is available at https://www.eclipse.org/legal/epl-2.0/
+*
+* SPDX-License-Identifier: EPL-2.0
+*
+* Contributors:
+*   Stefan Bischof (bipolis.org) - initial
+*/
+
+// Entry point of the DAX grammar. Only this file (a single-dot .ccc file) is
+// picked up as a root grammar by the congocc Maven plugin; the fragment
+// files (*.inc.ccc) are pulled in below via INCLUDE and are never processed
+// on their own.
+
+PARSER_PACKAGE=org.eclipse.daanse.dax.parser.ccc;
+NODE_PACKAGE=org.eclipse.daanse.dax.parser.ccc.tree;
+PARSER_CLASS=DaxParser;
+LEXER_CLASS=DaxLexer;
+DEFAULT_LEXICAL_STATE=DAX;
+TAB_SIZE=4;
+
+INCLUDE "Lexer.inc.ccc"
+INCLUDE "Expressions.inc.ccc"
+INCLUDE "Statements.inc.ccc"
