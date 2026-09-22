@@ -18,6 +18,7 @@ package org.eclipse.daanse.dax.model.api.expression;
  * The interface is sealed over the expression kinds produced by the parser
  * </p>
  */
-public sealed interface DaxExpression permits Literal, TableConstructor, BooleanExpression {
+public sealed interface DaxExpression permits Literal, TableConstructor, BooleanExpression, ArithmeticExpression,
+        LogicalExpression, StringExpression {
 
 }

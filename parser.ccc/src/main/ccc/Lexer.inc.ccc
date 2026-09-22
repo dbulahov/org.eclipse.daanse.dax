@@ -61,6 +61,44 @@ TOKEN #ComparisonOperator :
    < EQUAL : "=" >
 ;
 
+// Arithmetic operators for ArithmeticExpression. Named ArithmeticOperatorToken
+// (not ArithmeticOperator) to avoid colliding with the model.api enum of the
+// same simple name, org.eclipse.daanse.dax.model.api.expression
+// .ArithmeticExpression.ArithmeticOperator, which ArithmeticExpression's
+// INJECT block below also needs in scope.
+TOKEN #ArithmeticOperatorToken :
+   < PLUS : "+" >
+   |
+   < MINUS : "-" >
+   |
+   < ASTERISK : "*" >
+   |
+   < SLASH : "/" >
+   |
+   < CARET : "^" >
+;
+
+// Logical operators for LogicalExpression. DAX spells AND/OR as && and ||,
+// not the keywords. Named LogicalOperatorToken (not LogicalOperator) for the
+// same reason as ArithmeticOperatorToken above: it must not collide with the
+// model.api enum of the same simple name that LogicalExpression's INJECT
+// block below also needs in scope.
+TOKEN #LogicalOperatorToken :
+   < AND : "&&" >
+   |
+   < OR : "||" >
+;
+
+// The string operator for StringExpression. DAX has a single string
+// operator, & (concatenation). Named StringOperatorToken (not
+// StringOperator) for the same reason as ArithmeticOperatorToken/
+// LogicalOperatorToken above: it must not collide with the model.api enum
+// of the same simple name that StringExpression's INJECT block below also
+// needs in scope.
+TOKEN #StringOperatorToken :
+   < AMPERSAND : "&" >
+;
+
 // A DAX string literal: double-quoted, where an embedded double quote is
 // escaped by doubling it, e.g. "He said ""hi""".
 TOKEN :
