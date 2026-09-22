@@ -23,12 +23,15 @@ import java.time.LocalDateTime;
 
 import org.eclipse.daanse.dax.model.api.DaxStatement;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DateTimeLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
+import org.eclipse.daanse.dax.model.api.expression.LogicalExpression;
 import org.eclipse.daanse.dax.model.api.expression.NumericLiteral;
 import org.eclipse.daanse.dax.model.api.expression.RowConstructor;
+import org.eclipse.daanse.dax.model.api.expression.StringExpression;
 import org.eclipse.daanse.dax.model.api.expression.TableConstructor;
 import org.eclipse.daanse.dax.parser.api.DaxParserException;
 import org.eclipse.daanse.dax.parser.ccc.tree.StringLiteral;
@@ -318,6 +321,463 @@ class ParserTest {
         assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
         assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
         assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("6"));
+    }
+
+    @Test
+    void testBooleanExpression6() throws DaxParserException {
+        String dax = "EVALUATE {6 <> 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        BooleanExpression booleanExpr = (BooleanExpression) expr;
+        assertThat(booleanExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator.NOT_EQUAL);
+        assertThat(booleanExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(booleanExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) booleanExpr.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testArithmeticExpression1() throws DaxParserException {
+        String dax = "EVALUATE {6 + 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(arithmeticExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(arithmeticExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testArithmeticExpression2() throws DaxParserException {
+        String dax = "EVALUATE {6 - 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MINUS);
+        assertThat(arithmeticExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(arithmeticExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testArithmeticExpression3() throws DaxParserException {
+        String dax = "EVALUATE {6 * 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(arithmeticExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(arithmeticExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testArithmeticExpression4() throws DaxParserException {
+        String dax = "EVALUATE {6 / 2}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.DIVIDE);
+        assertThat(arithmeticExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(arithmeticExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.right()).value()).isEqualTo(new BigDecimal("2"));
+    }
+
+    @Test
+    void testArithmeticExpression5() throws DaxParserException {
+        String dax = "EVALUATE {3 ^ 2}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.POWER);
+        assertThat(arithmeticExpr.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.left()).value()).isEqualTo(new BigDecimal("3"));
+        assertThat(arithmeticExpr.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) arithmeticExpr.right()).value()).isEqualTo(new BigDecimal("2"));
+    }
+
+    @Test
+    void testArithmeticExpression6() throws DaxParserException {
+        String dax = "EVALUATE {\"a\" + \"b\"}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        ArithmeticExpression arithmeticExpr = (ArithmeticExpression) expr;
+        assertThat(arithmeticExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(arithmeticExpr.left()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) arithmeticExpr.left()).value()).isEqualTo("a");
+        assertThat(arithmeticExpr.right()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) arithmeticExpr.right()).value()).isEqualTo("b");
+    }
+
+    @Test
+    void testChainedArithmeticExpressionIsLeftAssociative() throws DaxParserException {
+        // 6 + 5 + 4 must build the left-associative tree (6 + 5) + 4, not
+        // one flat three-operand node and not the right-associative
+        // 6 + (5 + 4) grouping.
+        String dax = "EVALUATE {6 + 5 + 4}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression outer = (ArithmeticExpression) expr;
+        assertThat(outer.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+
+        assertThat(outer.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) outer.right()).value()).isEqualTo(new BigDecimal("4"));
+
+        assertThat(outer.left()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression inner = (ArithmeticExpression) outer.left();
+        assertThat(inner.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(inner.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) inner.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(inner.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) inner.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testLogicalExpressionAnd() throws DaxParserException {
+        String dax = "EVALUATE {5 < 6 && 6 > 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(LogicalExpression.class);
+        LogicalExpression logicalExpr = (LogicalExpression) expr;
+        assertThat(logicalExpr.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator.AND);
+        assertThat(logicalExpr.left()).isInstanceOf(BooleanExpression.class);
+        assertThat(logicalExpr.right()).isInstanceOf(BooleanExpression.class);
+    }
+
+    @Test
+    void testLogicalExpressionOr() throws DaxParserException {
+        String dax = "EVALUATE {5 < 6 || 6 < 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(LogicalExpression.class);
+        LogicalExpression logicalExpr = (LogicalExpression) expr;
+        assertThat(logicalExpr.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator.OR);
+        assertThat(logicalExpr.left()).isInstanceOf(BooleanExpression.class);
+        assertThat(logicalExpr.right()).isInstanceOf(BooleanExpression.class);
+    }
+
+    @Test
+    void testLogicalExpressionWithBooleanLiteralOperands() throws DaxParserException {
+        String dax = "EVALUATE {true && false}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        LogicalExpression logicalExpr = (LogicalExpression) expr;
+        assertThat(logicalExpr.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator.AND);
+        assertThat(logicalExpr.left()).isInstanceOf(BooleanLiteral.class);
+        assertThat(((BooleanLiteral) logicalExpr.left()).value()).isTrue();
+        assertThat(logicalExpr.right()).isInstanceOf(BooleanLiteral.class);
+        assertThat(((BooleanLiteral) logicalExpr.right()).value()).isFalse();
+    }
+
+    @Test
+    void testChainedLogicalExpressionIsLeftAssociative() throws DaxParserException {
+        // true && true && false must build the left-associative tree
+        // (true && true) && false, not one flat three-operand node.
+        String dax = "EVALUATE {true && true && false}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(LogicalExpression.class);
+        LogicalExpression outer = (LogicalExpression) expr;
+        assertThat(outer.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator.AND);
+        assertThat(outer.right()).isInstanceOf(BooleanLiteral.class);
+        assertThat(((BooleanLiteral) outer.right()).value()).isFalse();
+
+        assertThat(outer.left()).isInstanceOf(LogicalExpression.class);
+        LogicalExpression inner = (LogicalExpression) outer.left();
+        assertThat(inner.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator.AND);
+        assertThat(inner.left()).isInstanceOf(BooleanLiteral.class);
+        assertThat(((BooleanLiteral) inner.left()).value()).isTrue();
+        assertThat(inner.right()).isInstanceOf(BooleanLiteral.class);
+        assertThat(((BooleanLiteral) inner.right()).value()).isTrue();
+    }
+
+    @Test
+    void testLogicalExpressionBindsLooserThanComparisonAndArithmetic() throws DaxParserException {
+        // 6 + 5 < 20 && 1 = 1 must parse as ((6 + 5) < 20) && (1 = 1): both
+        // arithmetic and comparison bind tighter than &&.
+        String dax = "EVALUATE {6 + 5 < 20 && 1 = 1}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(LogicalExpression.class);
+        LogicalExpression logicalExpr = (LogicalExpression) expr;
+
+        assertThat(logicalExpr.left()).isInstanceOf(BooleanExpression.class);
+        BooleanExpression leftComparison = (BooleanExpression) logicalExpr.left();
+        assertThat(leftComparison.left()).isInstanceOf(ArithmeticExpression.class);
+
+        assertThat(logicalExpr.right()).isInstanceOf(BooleanExpression.class);
+    }
+
+    @Test
+    void testParenthesizedArithmeticExpressionOverridesPrecedence() throws DaxParserException {
+        // 6 + (5 + 4) must parse as 6 + (5 + 4): the parens are a distinct
+        // right-hand ArithmeticExpression node, not flattened away and not
+        // corrupted by the delimiter tokens around the grouped sub-expression.
+        String dax = "EVALUATE {6 + (5 + 4)}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression outer = (ArithmeticExpression) expr;
+        assertThat(outer.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+
+        assertThat(outer.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) outer.left()).value()).isEqualTo(new BigDecimal("6"));
+
+        assertThat(outer.right()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression inner = (ArithmeticExpression) outer.right();
+        assertThat(inner.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(inner.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) inner.left()).value()).isEqualTo(new BigDecimal("5"));
+        assertThat(inner.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) inner.right()).value()).isEqualTo(new BigDecimal("4"));
+    }
+
+    @Test
+    void testMultiplicationBindsTighterThanAdditionRegardlessOfOrder() throws DaxParserException {
+        // 6 * 5 + 4: * is already first left-to-right, so this alone would
+        // pass even without real precedence - kept for symmetry with the
+        // next case, which is the one that actually proves it.
+        String dax = "EVALUATE {6 * 5 + 4}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        assertThat(expr).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression outer = (ArithmeticExpression) expr;
+        assertThat(outer.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(outer.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) outer.right()).value()).isEqualTo(new BigDecimal("4"));
+
+        assertThat(outer.left()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression inner = (ArithmeticExpression) outer.left();
+        assertThat(inner.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(((NumericLiteral) inner.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(((NumericLiteral) inner.right()).value()).isEqualTo(new BigDecimal("5"));
+
+        // 4 + 6 * 5 is the real proof: * appears second left-to-right, but
+        // must still bind tighter than +, giving 4 + (6 * 5), i.e. the
+        // OUTER operator must be ADD, not MULTIPLY.
+        String dax2 = "EVALUATE {4 + 6 * 5}";
+        DaxStatement stmt2 = new DaxParserWrapper(dax2).parseDaxStatement();
+        DaxExpression expr2 = getFirstExpression(stmt2.evaluateStatements().get(0));
+        assertThat(expr2).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression outer2 = (ArithmeticExpression) expr2;
+        assertThat(outer2.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(outer2.left()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) outer2.left()).value()).isEqualTo(new BigDecimal("4"));
+
+        assertThat(outer2.right()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression inner2 = (ArithmeticExpression) outer2.right();
+        assertThat(inner2.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(((NumericLiteral) inner2.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(((NumericLiteral) inner2.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testPowerBindsTighterThanMultiplicationAndAddition() throws DaxParserException {
+        // 2 + 3 * 4 ^ 2 must parse as 2 + (3 * (4 ^ 2)): ^ tighter than *,
+        // * tighter than +.
+        String dax = "EVALUATE {2 + 3 * 4 ^ 2}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        DaxExpression expr = getFirstExpression(stmt.evaluateStatements().get(0));
+        ArithmeticExpression add = (ArithmeticExpression) expr;
+        assertThat(add.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(((NumericLiteral) add.left()).value()).isEqualTo(new BigDecimal("2"));
+
+        ArithmeticExpression multiply = (ArithmeticExpression) add.right();
+        assertThat(multiply.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(((NumericLiteral) multiply.left()).value()).isEqualTo(new BigDecimal("3"));
+
+        ArithmeticExpression power = (ArithmeticExpression) multiply.right();
+        assertThat(power.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.POWER);
+        assertThat(((NumericLiteral) power.left()).value()).isEqualTo(new BigDecimal("4"));
+        assertThat(((NumericLiteral) power.right()).value()).isEqualTo(new BigDecimal("2"));
+    }
+
+    @Test
+    void testParenthesesOverridePrecedence() throws DaxParserException {
+        // (4 + 6) * 5 must respect the explicit parens: MULTIPLY(ADD(4,6),
+        // 5) = 50, not the precedence-driven ADD(4, MULTIPLY(6,5)) = 34 that
+        // 4 + 6 * 5 (no parens) gives.
+        String dax = "EVALUATE {(4 + 6) * 5}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        DaxExpression expr = getFirstExpression(stmt.evaluateStatements().get(0));
+        assertThat(expr).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression outer = (ArithmeticExpression) expr;
+        assertThat(outer.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(outer.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) outer.right()).value()).isEqualTo(new BigDecimal("5"));
+
+        assertThat(outer.left()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression inner = (ArithmeticExpression) outer.left();
+        assertThat(inner.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(((NumericLiteral) inner.left()).value()).isEqualTo(new BigDecimal("4"));
+        assertThat(((NumericLiteral) inner.right()).value()).isEqualTo(new BigDecimal("6"));
+    }
+
+    @Test
+    void testMultiColumnRowConstructorStillParsesAfterPrecedenceChange() throws DaxParserException {
+        // Guards against the RowConstructor/PrimaryExpression grouping-parens
+        // ambiguity: a row starting with LPAREN must still be recognized as
+        // an explicit multi-column row when a real row follows (comma or
+        // closing brace after the matching RPAREN), not misread as a bare
+        // parenthesized arithmetic expression.
+        String dax = "EVALUATE {(\"a\", 1), (\"b\", 2)}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        TableConstructor tc = (TableConstructor) stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(tc.rows()).hasSize(2);
+        assertThat(tc.rows().get(0).columns()).hasSize(2);
+        assertThat(tc.rows().get(1).columns()).hasSize(2);
+    }
+
+    @Test
+    void testStringExpression1() throws DaxParserException {
+        String dax = "EVALUATE {\"a\" & \"b\"}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        DaxExpression expr = getFirstExpression(evalStmt);
+        StringExpression stringExpr = (StringExpression) expr;
+        assertThat(stringExpr.operator()).isEqualTo(org.eclipse.daanse.dax.model.api.expression.StringExpression.StringOperator.AND);
+        assertThat(stringExpr.left()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) stringExpr.left()).value()).isEqualTo("a");
+        assertThat(stringExpr.right()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) stringExpr.right()).value()).isEqualTo("b");
+    }
+
+    @Test
+    void testMixedAdditiveAndMultiplicativeChainFoldsLeftToRight() throws DaxParserException {
+        // 4 + 6 * 5 + 1 - 2 * 4. + and - are ONE precedence level, folded
+        // left to right (like every other chain in this grammar), with each
+        // * nested only where it directly occurs - NOT "first + pulls
+        // everything after it into one right-hand group". So the actual
+        // tree is:
+        //   ((4 + (6 * 5)) + 1) - (2 * 4)
+        // i.e. outermost operator is the LAST one scanned (MINUS), not the
+        // first (ADD). Both groupings evaluate to the same value (27), since
+        // +/- are associative/commutative as a chain, but only this shape is
+        // what the parser actually builds.
+        String dax = "EVALUATE {4 + 6 * 5 + 1 - 2 * 4}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        DaxExpression expr = getFirstExpression(stmt.evaluateStatements().get(0));
+        assertThat(expr).isInstanceOf(ArithmeticExpression.class);
+
+        // Outermost: ... - (2 * 4)
+        ArithmeticExpression minus = (ArithmeticExpression) expr;
+        assertThat(minus.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MINUS);
+
+        assertThat(minus.right()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression rightMultiply = (ArithmeticExpression) minus.right();
+        assertThat(rightMultiply.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(((NumericLiteral) rightMultiply.left()).value()).isEqualTo(new BigDecimal("2"));
+        assertThat(((NumericLiteral) rightMultiply.right()).value()).isEqualTo(new BigDecimal("4"));
+
+        // (4 + (6 * 5)) + 1
+        assertThat(minus.left()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression addOne = (ArithmeticExpression) minus.left();
+        assertThat(addOne.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(((NumericLiteral) addOne.right()).value()).isEqualTo(new BigDecimal("1"));
+
+        // 4 + (6 * 5)
+        assertThat(addOne.left()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression addFour = (ArithmeticExpression) addOne.left();
+        assertThat(addFour.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.ADD);
+        assertThat(((NumericLiteral) addFour.left()).value()).isEqualTo(new BigDecimal("4"));
+
+        assertThat(addFour.right()).isInstanceOf(ArithmeticExpression.class);
+        ArithmeticExpression leftMultiply = (ArithmeticExpression) addFour.right();
+        assertThat(leftMultiply.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator.MULTIPLY);
+        assertThat(((NumericLiteral) leftMultiply.left()).value()).isEqualTo(new BigDecimal("6"));
+        assertThat(((NumericLiteral) leftMultiply.right()).value()).isEqualTo(new BigDecimal("5"));
+    }
+
+    @Test
+    void testParenthesesOverridePrecedenceInStringExpression() throws DaxParserException {
+        // Without parens, "a" & "b" & "c" folds left-associatively:
+        // ("a" & "b") & "c" - left is a StringExpression, right is a bare
+        // literal. With parens around the right pair, "a" & ("b" & "c")
+        // must flip that: left is now the bare literal and right is the
+        // StringExpression, proving the parens are actually respected
+        // inside a string expression's operand position, not just ignored.
+        String dax = "EVALUATE {\"a\" & (\"b\" & \"c\")}";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        DaxExpression expr = getFirstExpression(stmt.evaluateStatements().get(0));
+        assertThat(expr).isInstanceOf(StringExpression.class);
+        StringExpression outer = (StringExpression) expr;
+        assertThat(outer.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.StringExpression.StringOperator.AND);
+
+        assertThat(outer.left()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) outer.left()).value()).isEqualTo("a");
+
+        assertThat(outer.right()).isInstanceOf(StringExpression.class);
+        StringExpression inner = (StringExpression) outer.right();
+        assertThat(inner.operator())
+                .isEqualTo(org.eclipse.daanse.dax.model.api.expression.StringExpression.StringOperator.AND);
+        assertThat(inner.left()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) inner.left()).value()).isEqualTo("b");
+        assertThat(inner.right()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) inner.right()).value()).isEqualTo("c");
     }
 
 }

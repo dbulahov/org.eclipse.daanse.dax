@@ -38,21 +38,55 @@ INJECT RowConstructor :
    }
 }
 
+// Lookahead-only production (same pattern as congocc's own Java.ccc grammar
+// uses for TypeDeclarationLA): a trial, backtracking parse used purely to
+// decide whether upcoming input starting with LPAREN is a real explicit row
+// group - LPAREN, one or more comma-separated columns, RPAREN, immediately
+// followed by the row separator (COMMA) or the end of the table (RBRACE) -
+// or just a bare expression whose PrimaryExpression happens to start with a
+// parenthesized arithmetic sub-expression, e.g. (4 + 6) * 5 as this row's
+// single column, where something other than COMMA/RBRACE follows the
+// matching RPAREN.
+RowConstructorLA#scan :
+   < LPAREN > Expression ( < COMMA > Expression )* < RPAREN >
+   ( < COMMA > | < RBRACE > )
+;
+
 // A row constructor is normally parenthesized, e.g. ("Value1", 1, TRUE);
 // DAX allows the parentheses to be omitted for a single-column row, e.g.
 // the bare "Hello World" in {"Hello World"}. #RowConstructor forces a
 // definite node in that single-column case too, so it does not collapse to
 // its only column expression.
 RowConstructor#RowConstructor :
-   < LPAREN > Expression ( < COMMA > Expression )* < RPAREN >
+   SCAN RowConstructorLA => < LPAREN > Expression ( < COMMA > Expression )* < RPAREN >
    |
    Expression
 ;
 
 // Void: a primary expression is always represented by whichever concrete
-// node matched; no separate wrapper node is created.
+// node matched; no separate wrapper node is created. A parenthesized
+// expression, e.g. (5 + 4), is likewise transparent: the parens are pure
+// grouping syntax to override precedence, so no wrapper node is created for
+// them either and the enclosed Expression's own node bubbles straight up.
+//
+// setTokensAreNodes(false)/(true) bracket only the LPAREN/RPAREN matches,
+// not Expression: LPAREN/RPAREN are #Delimiter tokens, so by default every
+// match of one pushes a real Delimiter node (tokensAreNodes defaults true;
+// the ! suffix on a bare token match does not suppress this). Left alone,
+// those two Delimiter nodes would bubble through this #void production into
+// whichever ambient #Name(N) fold called PrimaryExpression (e.g.
+// ArithmeticExpression's #ArithmeticExpression(3)), which pops a fixed
+// number of raw stack items regardless of type - two extra Delimiter
+// children throw off the count and corrupt which nodes end up grouped
+// together. Toggling the flag off only around the two delimiter matches
+// keeps Expression's own internal token nodes (literals, operators, ...)
+// completely unaffected.
 PrimaryExpression#void :
    TableConstructor
+   |
+   {setTokensAreNodes(false);} < LPAREN > {setTokensAreNodes(true);}
+   Expression
+   {setTokensAreNodes(false);} < RPAREN > {setTokensAreNodes(true);}
    |
    < STRING_LITERAL >
    |
@@ -63,6 +97,116 @@ PrimaryExpression#void :
    < FALSE >
    |
    < DATE_TIME_LITERAL >
+;
+
+INJECT ArithmeticExpression :
+   import org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression.ArithmeticOperator;
+   implements org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression
+{
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression left() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(0);
+   }
+
+   public ArithmeticOperator operator() {
+      ArithmeticOperatorToken op = firstChildOfType(ArithmeticOperatorToken.class);
+      return switch (op.getType()) {
+         case PLUS -> ArithmeticOperator.ADD;
+         case MINUS -> ArithmeticOperator.MINUS;
+         case ASTERISK -> ArithmeticOperator.MULTIPLY;
+         case SLASH -> ArithmeticOperator.DIVIDE;
+         case CARET -> ArithmeticOperator.POWER;
+         default -> throw new IllegalStateException("Unexpected arithmetic operator: " + op.getType());
+      };
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression right() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// Three precedence tiers below, tightest to loosest: PowerExpression (^),
+// MultiplicativeExpression (*, /), then ArithmeticExpression (+, -) itself.
+// All three produce the same ArithmeticExpression node type via the
+// #ArithmeticExpression(3) override on their own repetition - there is
+// only one AST type for "binary arithmetic expression" (see
+// ArithmeticOperator), the tiers exist purely in the grammar to get the
+// grouping right. Each tier collapses (no #void needed - SMART_NODE_CREATION
+// already does this by default) to its single child of the next-tighter
+// tier when its own operator does not appear at all, exactly like
+// ArithmeticExpression already did before this tier split.
+
+// Tightest: exponentiation. Folds left-associatively like the other tiers,
+// so 3 ^ 2 ^ 2 currently builds (3 ^ 2) ^ 2; most languages (and DAX) treat
+// ^ as right-associative (3 ^ (2 ^ 2)) - no test exercises a ^ chain yet,
+// so this is a known, not-yet-addressed gap, consistent in spirit with the
+// left-associative-only folding used everywhere else in this grammar so far.
+PowerExpression :
+   PrimaryExpression
+   (
+      < CARET >
+      PrimaryExpression
+      #ArithmeticExpression(3)
+   )*
+;
+
+// Middle: multiplication/division bind tighter than +/- but looser than ^.
+MultiplicativeExpression :
+   PowerExpression
+   (
+      ( < ASTERISK > | < SLASH > )
+      PowerExpression
+      #ArithmeticExpression(3)
+   )*
+;
+
+// Loosest arithmetic tier: addition/subtraction. Still named
+// ArithmeticExpression, not "AdditiveExpression": it is the stable entry
+// point into the arithmetic precedence chain that BooleanExpression below
+// already calls, so no other production needs to change to pick up real
+// precedence. E.g. 6 * 5 + 4 is (6 * 5) + 4, and 4 + 6 * 5 is now correctly
+// 4 + (6 * 5), not (4 + 6) * 5 as the old single-tier version gave.
+ArithmeticExpression :
+   MultiplicativeExpression
+   (
+      ( < PLUS > | < MINUS > )
+      MultiplicativeExpression
+      #ArithmeticExpression(3)
+   )*
+;
+
+INJECT StringExpression :
+   import org.eclipse.daanse.dax.model.api.expression.StringExpression.StringOperator;
+   implements org.eclipse.daanse.dax.model.api.expression.StringExpression
+{
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression left() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(0);
+   }
+
+   public StringOperator operator() {
+      StringOperatorToken op = firstChildOfType(StringOperatorToken.class);
+      return switch (op.getType()) {
+         case AMPERSAND -> StringOperator.AND;
+         default -> throw new IllegalStateException("Unexpected string operator: " + op.getType());
+      };
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression right() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// No #void: SMART_NODE_CREATION collapses this to its single
+// ArithmeticExpression child when there is no &. Real DAX operator
+// precedence puts & (concatenation) below +/- but above comparison, so this
+// tier sits directly between ArithmeticExpression and BooleanExpression:
+// "a" & 1 + 2 is "a" & (1 + 2), and "a" & "b" = "c" is ("a" & "b") = "c".
+StringExpression :
+   ArithmeticExpression
+   (
+      < AMPERSAND >
+      ArithmeticExpression
+      #StringExpression(3)
+   )*
 ;
 
 INJECT BooleanExpression :
@@ -92,23 +236,66 @@ INJECT BooleanExpression :
 }
 
 // No #void and no forced #BooleanExpression: SMART_NODE_CREATION collapses
-// this to its single PrimaryExpression child when there is no comparison
+// this to its single StringExpression child when there is no comparison
 // operator, and only builds a real BooleanExpression node (left, operator
-// token, right) when one is present.
+// token, right) when one is present. StringExpression as the operand
+// (rather than ArithmeticExpression/PrimaryExpression directly) makes
+// arithmetic and string concatenation bind tighter than comparison, e.g.
+// 6 + 5 < 20 is (6 + 5) < 20, and "a" & "b" = "ab" is ("a" & "b") = "ab".
 BooleanExpression :
-   PrimaryExpression
+   StringExpression
    [
       ( < LESS_THAN > | < LESS_THAN_OR_EQUAL > | < GREATER_THAN > | < GREATER_THAN_OR_EQUAL > | < EQUAL > | < NOT_EQUAL > )
-      PrimaryExpression
+      StringExpression
    ]
 ;
 
-// Void: currently a thin alias for BooleanExpression, kept as the stable
-// entry point that EvaluateStatement/RowConstructor/ExpressionRoot call, so
-// future precedence levels (logical AND/OR, ...) can be inserted here
-// without touching those call sites.
-Expression#void :
+INJECT LogicalExpression :
+   import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator;
+   implements org.eclipse.daanse.dax.model.api.expression.LogicalExpression
+{
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression left() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(0);
+   }
+
+   public LogicalOperator operator() {
+      LogicalOperatorToken op = firstChildOfType(LogicalOperatorToken.class);
+      return switch (op.getType()) {
+         case AND -> LogicalOperator.AND;
+         case OR -> LogicalOperator.OR;
+         default -> throw new IllegalStateException("Unexpected logical operator: " + op.getType());
+      };
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression right() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// No #void: SMART_NODE_CREATION collapses this to its single
+// BooleanExpression child when there is no && or ||. #LogicalExpression(3)
+// folds left-associatively on repetition, same as ArithmeticExpression, so
+// a && b && c builds (a && b) && c. && and || share one precedence level
+// for now (no "AND binds tighter than OR" yet), consistent with how the
+// arithmetic operators are currently flattened to one level too.
+// BooleanExpression as the operand makes comparison/arithmetic bind tighter
+// than logical combination, e.g. [Amount] > 100 && [Country] = "US" is
+// ([Amount] > 100) && ([Country] = "US").
+LogicalExpression :
    BooleanExpression
+   (
+      ( < AND > | < OR > )
+      BooleanExpression
+      #LogicalExpression(3)
+   )*
+;
+
+// Void: currently a thin alias for LogicalExpression, kept as the stable
+// entry point that EvaluateStatement/RowConstructor/ExpressionRoot call, so
+// future precedence levels can be inserted here without touching those call
+// sites.
+Expression#void :
+   LogicalExpression
 ;
 
 // Entry point for DaxParser#parseExpression(): parses one expression and
