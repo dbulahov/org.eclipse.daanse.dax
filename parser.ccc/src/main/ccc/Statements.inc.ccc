@@ -193,19 +193,84 @@ INJECT EvaluateStatement :
    public List<org.eclipse.daanse.dax.model.api.OrderByItem> orderBy() {
       return childrenOfType(org.eclipse.daanse.dax.model.api.OrderByItem.class);
    }
+
+   // Not part of the public EvaluateStatement API: START AT only makes sense
+   // together with ORDER BY, so it is exposed per-item via
+   // OrderByItem.startAt() instead (see below) rather than as a parallel
+   // list here. This package-visible helper backs that lookup: the table
+   // expression and every START AT value are direct DaxExpression children
+   // of this node, in source order, with nothing else of that type in
+   // between (OrderByItem wraps its own expression, so it does not count
+   // here) - so the table expression is always index 0, and every START AT
+   // value (there may be none) follows it.
+   List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> startAtValues() {
+      List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> all = childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+      return all.subList(1, all.size());
+   }
 }
+
+// Lookahead-only production (same pattern as RowConstructorLA in
+// Expressions.inc.ccc): a bare Expression can itself start with LPAREN (its
+// own transparent grouping parens), so a trial parse is needed to tell that
+// apart from a genuine parenthesized START AT value list.
+StartAtValuesLA#scan :
+   < LPAREN > Expression ( < COMMA > Expression )* < RPAREN >
+;
 
 // #EvaluateStatement forces a definite node for the same reason as
 // #DaxStatement above: EVALUATE plus a single table expression would
 // otherwise collapse to just that expression. The ORDER BY clause is
-// optional, e.g. EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate] DESC.
+// optional, e.g. EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate] DESC; the
+// START AT clause is optional too but only meaningful together with ORDER
+// BY, so it is nested inside that same optional block, e.g.
+// EVALUATE 'Product' ORDER BY 'Product'[ProductKey] ASC START AT 50.
+//
+// A single START AT value may be bare, like that; more than one must be
+// parenthesized, e.g. START AT ("Bikes", 50) - same as RowConstructor's own
+// bare-single-value/parenthesized-multi-value split. Either way, sorting can
+// be by several columns, so START AT must supply exactly one value per
+// ORDER BY column to unambiguously pin down a starting position - fewer
+// values leaves later columns undetermined, and DAX does not define what to
+// do with leftover ones either, so both directions are rejected (not just
+// "too few"). orderByCount/startAtCount are plain local counters, not
+// queried from any node - the two lists are only ever compared once, right
+// here, so a real accessor for "how many" would exist solely for this
+// check. startAtCount is declared once, before the SCAN choice, and only
+// ever assigned (never redeclared) inside either branch, since a variable
+// declared inside one branch of a congocc choice does not stay in scope
+// past it.
 EvaluateStatement#EvaluateStatement :
   < EVALUATE >
   Expression
-  [ < ORDER > < BY > OrderByItem ( < COMMA > OrderByItem )* ]
+  [
+     < ORDER > < BY >
+     OrderByItem { int orderByCount = 1; }
+     ( < COMMA > OrderByItem { orderByCount++; } )*
+     [
+        < START > < AT >
+        { int startAtCount = 0; }
+        (
+           SCAN StartAtValuesLA =>
+           < LPAREN >
+           Expression { startAtCount = 1; }
+           ( < COMMA > Expression { startAtCount++; } )*
+           < RPAREN >
+           |
+           Expression { startAtCount = 1; }
+        )
+        {
+           if (startAtCount != orderByCount) {
+              throw new IllegalStateException("START AT must supply exactly one value per ORDER BY column ("
+                    + orderByCount + " expected, " + startAtCount + " given)");
+           }
+        }
+     ]
+  ]
 ;
 
 INJECT OrderByItem :
+   import java.util.List;
+   import java.util.Optional;
    import org.eclipse.daanse.dax.model.api.OrderByItem.SortDirection;
    implements org.eclipse.daanse.dax.model.api.OrderByItem
 {
@@ -219,6 +284,25 @@ INJECT OrderByItem :
          return SortDirection.DESC;
       }
       return SortDirection.ASC;
+   }
+
+   // START AT has no dedicated grammar shape of its own tying each value to
+   // its OrderByItem - it is a single trailing, comma-separated list on the
+   // enclosing EvaluateStatement, positionally matched to the ORDER BY items
+   // (see EvaluateStatement.startAtValues() above). So this item finds its
+   // own value by asking its parent EvaluateStatement for that raw list and
+   // looking up its own position among its OrderByItem siblings.
+   public Optional<org.eclipse.daanse.dax.model.api.expression.DaxExpression> startAt() {
+      var parent = getParent();
+      if (parent instanceof EvaluateStatement statement) {
+         List<org.eclipse.daanse.dax.model.api.OrderByItem> siblings = statement.orderBy();
+         int index = siblings.indexOf(this);
+         List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> values = statement.startAtValues();
+         if (index >= 0 && index < values.size()) {
+            return Optional.of(values.get(index));
+         }
+      }
+      return Optional.empty();
    }
 }
 
