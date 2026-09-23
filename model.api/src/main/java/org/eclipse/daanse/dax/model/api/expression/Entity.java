@@ -8,17 +8,17 @@
  * SPDX-License-Identifier: EPL-2.0
  *
  * Contributors:
- *   Stefan Bischof (bipolis.org) - initial
+ *   dbulahov - initial
  */
 package org.eclipse.daanse.dax.model.api.expression;
 
 /**
- * Root interface of all DAX expressions.
- * <p>
- * The interface is sealed over the expression kinds produced by the parser
- * </p>
+ * A reference to a table (entity) by name, e.g. {@code 'Sales'}.
  */
-public sealed interface DaxExpression permits Literal, TableConstructor, BooleanExpression, ArithmeticExpression,
-        LogicalExpression, StringExpression, Entity {
+public non-sealed interface Entity extends DaxExpression {
 
+    /**
+     * @return the entity (table) name without the surrounding quotes
+     */
+    String name();
 }

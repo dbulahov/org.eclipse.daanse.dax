@@ -97,6 +97,8 @@ PrimaryExpression#void :
    < FALSE >
    |
    < DATE_TIME_LITERAL >
+   |
+   < ENTITY_NAME >
 ;
 
 INJECT ArithmeticExpression :

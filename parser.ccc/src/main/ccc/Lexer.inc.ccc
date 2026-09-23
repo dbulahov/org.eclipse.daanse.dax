@@ -114,6 +114,16 @@ TOKEN :
    < DATE_TIME_LITERAL : "dt" "\"" (~["\""])* "\"" > #DateTimeLiteral
 ;
 
+// A DAX entity (table) name, single-quoted, e.g. 'Sales'; an embedded single
+// quote is escaped by doubling it, e.g. 'It''s Sales'. Quoting is required
+// only when the name contains spaces or special characters, but this grammar
+// currently only recognizes the quoted form.
+TOKEN :
+   < #DOUBLED_SINGLE_QUOTE : "''" >
+   |
+   < ENTITY_NAME : "'" ( <DOUBLED_SINGLE_QUOTE> | ~["'"] )* "'" > #Entity
+;
+
 // A DAX numeric literal, e.g. 42 or 3.14. No leading sign and no exponent
 // notation yet; those belong to unary/binary expression grammar once it
 // exists.
@@ -133,6 +143,16 @@ INJECT PARSER_CLASS :
    public static String stripQuotes(String image) {
       String inner = image.substring(1, image.length() - 1);
       return inner.replace("\"\"", "\"");
+   }
+
+   /**
+    * Strips the surrounding single quotes from a DAX {@link #ENTITY_NAME}
+    * token image and un-doubles embedded {@code ''} escapes back into a
+    * single {@code '}.
+    */
+   public static String stripSingleQuotes(String image) {
+      String inner = image.substring(1, image.length() - 1);
+      return inner.replace("''", "'");
    }
 
    /**
@@ -182,6 +202,20 @@ INJECT NumericLiteral :
          value = new BigDecimal(getImage());
       }
       return value;
+   }
+}
+
+INJECT Entity :
+   import static org.eclipse.daanse.dax.parser.ccc.DaxParser.stripSingleQuotes;
+   implements org.eclipse.daanse.dax.model.api.expression.Entity
+{
+   private String name;
+
+   public String name() {
+      if (name == null) {
+         name = stripSingleQuotes(getImage());
+      }
+      return name;
    }
 }
 
