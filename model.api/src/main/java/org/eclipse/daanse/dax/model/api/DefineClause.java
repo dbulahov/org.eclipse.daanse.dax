@@ -19,6 +19,7 @@ package org.eclipse.daanse.dax.model.api;
  * Sealed over the kinds of definitions supported by the parser.
  * </p>
  */
-public sealed interface DefineClause permits MeasureDefinition, TableDefinition, ColumnDefinition, VariableDefinition {
+public sealed interface DefineClause
+        permits MeasureDefinition, TableDefinition, ColumnDefinition, VariableDefinition, ParameterDefinition {
 
 }

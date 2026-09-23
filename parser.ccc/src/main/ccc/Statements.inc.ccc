@@ -46,8 +46,10 @@ DaxStatement#DaxStatement :
 ;
 
 // Void: a DEFINE clause entry is always represented by whichever concrete
-// node matched (MEASURE, TABLE, COLUMN and VAR definitions start with
-// distinct reserved keywords, so there is no ambiguity to resolve).
+// node matched. MEASURE, TABLE, COLUMN and VAR definitions start with
+// distinct reserved keywords; ParameterDefinition instead starts directly
+// with a PARAMETER_REFERENCE token (@Name), a leading token none of the
+// others can start with - so there is no ambiguity to resolve either way.
 DefineClauseEntry#void :
    MeasureDefinition
    |
@@ -56,6 +58,8 @@ DefineClauseEntry#void :
    ColumnDefinition
    |
    VariableDefinition
+   |
+   ParameterDefinition
 ;
 
 INJECT MeasureDefinition :
@@ -150,6 +154,29 @@ INJECT VariableDefinition :
 VariableDefinition#VariableDefinition :
    < VAR >
    < IDENTIFIER >
+   < EQUAL >
+   Expression
+;
+
+INJECT ParameterDefinition :
+   implements org.eclipse.daanse.dax.model.api.ParameterDefinition
+{
+   public String name() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.Parameter.class).name();
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// One parameter definition: unlike the other DEFINE entries, it has no
+// leading reserved keyword at all - just the PARAMETER_REFERENCE token
+// itself (which is also a DaxExpression), followed by the value it is
+// defined as, e.g. @MinAmount = 1000. #ParameterDefinition forces a
+// definite node so it does not collapse to just its formula.
+ParameterDefinition#ParameterDefinition :
+   < PARAMETER_REFERENCE >
    < EQUAL >
    Expression
 ;
