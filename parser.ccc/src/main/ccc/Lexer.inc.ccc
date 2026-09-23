@@ -133,6 +133,26 @@ TOKEN :
    < NUMERIC_LITERAL : (<DIGIT>)+ ("." (<DIGIT>)+)? > #NumericLiteral
 ;
 
+// An unquoted identifier, currently used only as a DAX function name, e.g.
+// NOW or ALL. Declared after EVALUATE/TRUE/FALSE above: on an equal-length
+// match, congocc's lexer prefers whichever token was declared first, so
+// those keywords are still matched as themselves rather than as a generic
+// identifier. Tagged #FunctionName (not #Identifier) so the node class does
+// not collide with the public Identifier node below, which represents a
+// fully qualified column reference such as 'Sales'[Status], not a bare
+// function name.
+TOKEN :
+   < IDENTIFIER : ["a"-"z","A"-"Z","_"] (["a"-"z","A"-"Z","0"-"9","_"])* > #FunctionName
+;
+
+// A DAX scalar (column) reference in square brackets, e.g. [Status]. No
+// embedded-bracket escaping: column names never contain "]" in this
+// grammar. Always paired with a preceding entity (table) reference to form
+// an Identifier - see EntityReference below.
+TOKEN :
+   < COLUMN_REFERENCE : "[" (~["]"])* "]" > #Scalar
+;
+
 INJECT PARSER_CLASS :
 {
    /**
@@ -153,6 +173,15 @@ INJECT PARSER_CLASS :
    public static String stripSingleQuotes(String image) {
       String inner = image.substring(1, image.length() - 1);
       return inner.replace("''", "'");
+   }
+
+   /**
+    * Strips the surrounding square brackets from a DAX
+    * {@link #COLUMN_REFERENCE} token image, e.g. {@code [Status]} to
+    * {@code Status}.
+    */
+   public static String stripBrackets(String image) {
+      return image.substring(1, image.length() - 1);
    }
 
    /**
@@ -214,6 +243,28 @@ INJECT Entity :
    public String name() {
       if (name == null) {
          name = stripSingleQuotes(getImage());
+      }
+      return name;
+   }
+}
+
+INJECT Identifier :
+   implements org.eclipse.daanse.dax.model.api.expression.Identifier
+{
+   public java.util.List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> parts() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+INJECT Scalar :
+   import static org.eclipse.daanse.dax.parser.ccc.DaxParser.stripBrackets;
+   implements org.eclipse.daanse.dax.model.api.expression.Scalar
+{
+   private String name;
+
+   public String name() {
+      if (name == null) {
+         name = stripBrackets(getImage());
       }
       return name;
    }

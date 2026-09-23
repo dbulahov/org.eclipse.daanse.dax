@@ -63,6 +63,69 @@ RowConstructor#RowConstructor :
    Expression
 ;
 
+INJECT FunctionCall :
+   implements org.eclipse.daanse.dax.model.api.expression.FunctionCall
+{
+   public String functionName() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+
+   public java.util.List<org.eclipse.daanse.dax.model.api.expression.DaxExpression> arguments() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+// #FunctionCall forces a definite node for the same reason as
+// #TableConstructor above: a call with a single argument, e.g. ALL('Sales'),
+// would otherwise risk collapsing to just that argument.
+FunctionCall#FunctionCall :
+   < IDENTIFIER >
+   < LPAREN >
+   [ Expression ( < COMMA > Expression )* ]
+   < RPAREN >
+;
+
+// Lookahead-only production: FunctionCall and Keyword both start with the
+// same IDENTIFIER token, so a 2-token peek is needed to tell them apart -
+// FunctionCall requires that IDENTIFIER be immediately followed by LPAREN;
+// anything else starting with IDENTIFIER is a bare Keyword instead.
+FunctionCallLA#scan :
+   < IDENTIFIER > < LPAREN >
+;
+
+INJECT Keyword :
+   implements org.eclipse.daanse.dax.model.api.expression.Keyword
+{
+   public String name() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+}
+
+// A bare unquoted word standing alone as a value, e.g. the DESC in
+// TOPN(10, 'Sales', 'Sales'[Amount], DESC). #Keyword forces a definite node
+// wrapping the single IDENTIFIER (FunctionName) token child, matching the
+// same reuse-the-lexical-token approach FunctionCall itself uses for its
+// name.
+Keyword#Keyword :
+   < IDENTIFIER >
+;
+
+// A table (Entity) reference, optionally further qualified by a column
+// (Scalar) reference in square brackets, e.g. 'Sales' alone, or
+// 'Sales'[Status] to refer to a specific column of that table. Void: with no
+// bracket qualifier this has exactly one child (the Entity node) and
+// SMART_NODE_CREATION collapses it to that Entity, matching the plain
+// 'Sales' case unchanged; with one, #Identifier(2) folds the Entity and the
+// bracketed Scalar into a single Identifier node whose parts() is
+// [Entity, Scalar].
+EntityReference#void :
+   < ENTITY_NAME >
+   [
+      < COLUMN_REFERENCE >
+      #Identifier(2)
+   ]
+;
+
 // Void: a primary expression is always represented by whichever concrete
 // node matched; no separate wrapper node is created. A parenthesized
 // expression, e.g. (5 + 4), is likewise transparent: the parens are pure
@@ -84,6 +147,10 @@ RowConstructor#RowConstructor :
 PrimaryExpression#void :
    TableConstructor
    |
+   SCAN FunctionCallLA => FunctionCall
+   |
+   Keyword
+   |
    {setTokensAreNodes(false);} < LPAREN > {setTokensAreNodes(true);}
    Expression
    {setTokensAreNodes(false);} < RPAREN > {setTokensAreNodes(true);}
@@ -98,7 +165,7 @@ PrimaryExpression#void :
    |
    < DATE_TIME_LITERAL >
    |
-   < ENTITY_NAME >
+   EntityReference
 ;
 
 INJECT ArithmeticExpression :

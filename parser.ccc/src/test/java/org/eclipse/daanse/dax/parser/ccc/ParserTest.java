@@ -29,9 +29,13 @@ import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DateTimeLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
 import org.eclipse.daanse.dax.model.api.expression.Entity;
+import org.eclipse.daanse.dax.model.api.expression.FunctionCall;
+import org.eclipse.daanse.dax.model.api.expression.Identifier;
+import org.eclipse.daanse.dax.model.api.expression.Keyword;
 import org.eclipse.daanse.dax.model.api.expression.LogicalExpression;
 import org.eclipse.daanse.dax.model.api.expression.NumericLiteral;
 import org.eclipse.daanse.dax.model.api.expression.RowConstructor;
+import org.eclipse.daanse.dax.model.api.expression.Scalar;
 import org.eclipse.daanse.dax.model.api.expression.StringExpression;
 import org.eclipse.daanse.dax.model.api.expression.TableConstructor;
 import org.eclipse.daanse.dax.parser.api.DaxParserException;
@@ -793,6 +797,199 @@ class ParserTest {
         assertThat(entity.name()).isEqualTo("Sales");
     }
 
-    
+    @Test
+    void testFunctionCallNoArguments() throws DaxParserException {
+        String dax = "EVALUATE NOW()";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("NOW");
+        assertThat(fc.arguments()).isEmpty();
+    }
+
+
+    @Test
+    void testFunctionCallSingleArgument() throws DaxParserException {
+        String dax = "EVALUATE ALL('Sales')";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("ALL");
+        assertThat(fc.arguments()).hasSize(1);
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        Entity entity = (Entity)fc.arguments().get(0);
+        assertThat(entity.name()).isEqualToIgnoringCase("Sales");
+    }
+
+    @Test
+    void testFunctionCallSingleArgument1() throws DaxParserException {
+        String dax = "EVALUATE VALUES('Sales'[Status])";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("VALUES");
+        assertThat(fc.arguments()).hasSize(1);
+        assertThat(fc.arguments().get(0)).isInstanceOf(Identifier.class);
+        Identifier identifier = (Identifier)fc.arguments().get(0);
+        assertThat(identifier.parts()).hasSize(2);
+
+        assertThat(identifier.parts().get(0)).isInstanceOf(Entity.class);
+        Entity entity = (Entity)identifier.parts().get(0);
+        assertThat(entity.name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(identifier.parts().get(1)).isInstanceOf(Scalar.class);
+        Scalar scalar = (Scalar)identifier.parts().get(1);
+        assertThat(scalar.name()).isEqualToIgnoringCase("Status");
+    }
+
+
+    @Test
+    void testFunctionCallArguments() throws DaxParserException {
+        String dax = "EVALUATE TOPN(10, 'Sales', 'Sales'[Amount], DESC)";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("TOPN");
+        assertThat(fc.arguments()).hasSize(4);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(NumericLiteral.class);
+        NumericLiteral numericLiteral = (NumericLiteral)fc.arguments().get(0);
+        assertThat(numericLiteral.value()).isEqualTo(new BigDecimal("10"));
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(Entity.class);
+        Entity entity = (Entity)fc.arguments().get(1);
+        assertThat(entity.name()).isEqualTo("Sales");
+
+
+        assertThat(fc.arguments().get(2)).isInstanceOf(Identifier.class);
+        Identifier identifier = (Identifier)fc.arguments().get(2);
+        assertThat(identifier.parts()).hasSize(2);
+
+        assertThat(identifier.parts().get(0)).isInstanceOf(Entity.class);
+        entity = (Entity)identifier.parts().get(0);
+        assertThat(entity.name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(identifier.parts().get(1)).isInstanceOf(Scalar.class);
+        Scalar scalar = (Scalar)identifier.parts().get(1);
+        assertThat(scalar.name()).isEqualToIgnoringCase("Amount");
+
+        assertThat(fc.arguments().get(3)).isInstanceOf(Keyword.class);
+        Keyword keyword = (Keyword)fc.arguments().get(3);
+        assertThat(keyword.name()).isEqualTo("DESC");
+
+    }
+
+    @Test
+    void testNestedFunctionCallArgument() throws DaxParserException {
+        String dax = "EVALUATE SUMMARIZE('Sales', 'Product'[Category], \"Total\", SUM('Sales'[Amount]))";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("SUMMARIZE");
+        assertThat(fc.arguments()).hasSize(4);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        Entity table = (Entity) fc.arguments().get(0);
+        assertThat(table.name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(Identifier.class);
+        Identifier groupByColumn = (Identifier) fc.arguments().get(1);
+        assertThat(groupByColumn.parts()).hasSize(2);
+        assertThat(groupByColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) groupByColumn.parts().get(0)).name()).isEqualToIgnoringCase("Product");
+        assertThat(groupByColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) groupByColumn.parts().get(1)).name()).isEqualToIgnoringCase("Category");
+
+        assertThat(fc.arguments().get(2)).isInstanceOf(StringLiteral.class);
+        StringLiteral columnName = (StringLiteral) fc.arguments().get(2);
+        assertThat(columnName.value()).isEqualTo("Total");
+
+        assertThat(fc.arguments().get(3)).isInstanceOf(FunctionCall.class);
+        FunctionCall sumCall = (FunctionCall) fc.arguments().get(3);
+        assertThat(sumCall.functionName()).isEqualToIgnoringCase("SUM");
+        assertThat(sumCall.arguments()).hasSize(1);
+
+        assertThat(sumCall.arguments().get(0)).isInstanceOf(Identifier.class);
+        Identifier sumColumn = (Identifier) sumCall.arguments().get(0);
+        assertThat(sumColumn.parts()).hasSize(2);
+        assertThat(sumColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) sumColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(sumColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) sumColumn.parts().get(1)).name()).isEqualToIgnoringCase("Amount");
+    }
+
+    @Test
+    void testFunctionCallWithBooleanExpressionArgument() throws DaxParserException {
+        String dax = """
+                EVALUATE
+                CALCULATETABLE(
+                    'Sales',
+                    'Date'[Year] = 2024
+                )""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("CALCULATETABLE");
+        assertThat(fc.arguments()).hasSize(2);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        Entity table = (Entity) fc.arguments().get(0);
+        assertThat(table.name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(BooleanExpression.class);
+        BooleanExpression filter = (BooleanExpression) fc.arguments().get(1);
+        assertThat(filter.operator()).isEqualTo(BooleanExpression.BooleanOperator.EQUAL);
+
+        assertThat(filter.left()).isInstanceOf(Identifier.class);
+        Identifier filterColumn = (Identifier) filter.left();
+        assertThat(filterColumn.parts()).hasSize(2);
+        assertThat(filterColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) filterColumn.parts().get(0)).name()).isEqualToIgnoringCase("Date");
+        assertThat(filterColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) filterColumn.parts().get(1)).name()).isEqualToIgnoringCase("Year");
+
+        assertThat(filter.right()).isInstanceOf(NumericLiteral.class);
+        NumericLiteral filterValue = (NumericLiteral) filter.right();
+        assertThat(filterValue.value()).isEqualTo(new BigDecimal("2024"));
+    }
+
+    @Test
+    void testUnterminatedFunctionCallThrows() {
+        // the call is missing its closing parenthesis
+        String dax = "EVALUATE NOW(";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testMissingCommaBetweenFunctionCallArgumentsThrows() {
+        // two arguments with no comma separating them
+        String dax = "EVALUATE ALL('Sales' 'Product')";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testFunctionCallWithLeadingCommaThrows() {
+        // a comma with no argument before it
+        String dax = "EVALUATE NOW(,)";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testFunctionCallWithTrailingCommaThrows() {
+        // a comma with no argument after it
+        String dax = "EVALUATE ALL('Sales',)";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
 
 }
