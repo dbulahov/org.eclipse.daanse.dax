@@ -18,7 +18,7 @@ indent_size = 2
 [{LICENSE,*.md,*.g4}]
 indent_size = unset
 
-[{Lexer.inc.ccc,Expressions.inc.ccc}]
+[{Lexer.inc.ccc,Expressions.inc.ccc,Statements.inc.ccc}]
 indent_size = unset
 
 [*.bndrun]

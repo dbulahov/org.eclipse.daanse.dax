@@ -33,18 +33,52 @@ DaxStatement#DaxStatement :
 
 
 INJECT EvaluateStatement :
+   import java.util.List;
    implements org.eclipse.daanse.dax.model.api.EvaluateStatement
 {
    public org.eclipse.daanse.dax.model.api.expression.DaxExpression tableExpression() {
       return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
    }
+
+   public List<org.eclipse.daanse.dax.model.api.OrderByItem> orderBy() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.OrderByItem.class);
+   }
 }
 
 // #EvaluateStatement forces a definite node for the same reason as
 // #DaxStatement above: EVALUATE plus a single table expression would
-// otherwise collapse to just that expression.
+// otherwise collapse to just that expression. The ORDER BY clause is
+// optional, e.g. EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate] DESC.
 EvaluateStatement#EvaluateStatement :
   < EVALUATE >
   Expression
+  [ < ORDER > < BY > OrderByItem ( < COMMA > OrderByItem )* ]
+;
+
+INJECT OrderByItem :
+   import org.eclipse.daanse.dax.model.api.OrderByItem.SortDirection;
+   implements org.eclipse.daanse.dax.model.api.OrderByItem
+{
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+
+   public SortDirection direction() {
+      FunctionName direction = firstChildOfType(FunctionName.class);
+      if (direction != null && "DESC".equalsIgnoreCase(direction.getImage())) {
+         return SortDirection.DESC;
+      }
+      return SortDirection.ASC;
+   }
+}
+
+// One item of an ORDER BY clause: an expression to sort by, followed by an
+// optional ASC/DESC direction. #OrderByItem forces a definite node even
+// without a direction, so a single-item clause does not collapse to just its
+// expression. The direction is deliberately a plain IDENTIFIER, not a
+// reserved token - see the ORDER/BY comment in Lexer.inc.ccc.
+OrderByItem#OrderByItem :
+   Expression
+   [ < IDENTIFIER > ]
 ;
 

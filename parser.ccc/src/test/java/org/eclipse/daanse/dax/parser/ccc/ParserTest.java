@@ -23,6 +23,7 @@ import java.time.LocalDateTime;
 
 import org.eclipse.daanse.dax.model.api.DaxStatement;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.api.OrderByItem;
 import org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
@@ -990,6 +991,198 @@ class ParserTest {
         String dax = "EVALUATE ALL('Sales',)";
         assertThatExceptionOfType(DaxParserException.class)
                 .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testEvaluateWithOrderByClause() throws DaxParserException {
+        String dax = "EVALUATE 'Sales'\nORDER BY 'Sales'[OrderDate] DESC";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(Entity.class);
+        assertThat(((Entity) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem item = evalStmt.orderBy().get(0);
+        assertThat(item.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+
+        assertThat(item.expression()).isInstanceOf(Identifier.class);
+        Identifier orderByColumn = (Identifier) item.expression();
+        assertThat(orderByColumn.parts()).hasSize(2);
+        assertThat(orderByColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) orderByColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(orderByColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) orderByColumn.parts().get(1)).name()).isEqualToIgnoringCase("OrderDate");
+    }
+
+    @Test
+    void testEvaluateWithoutOrderByClauseHasNoOrderByItems() throws DaxParserException {
+        String dax = "EVALUATE 'Sales'";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.orderBy()).isEmpty();
+    }
+
+    @Test
+    void testOrderByWithoutDirectionDefaultsToAscending() throws DaxParserException {
+        String dax = "EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate]";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        assertThat(evalStmt.orderBy().get(0).direction()).isEqualTo(OrderByItem.SortDirection.ASC);
+    }
+
+    @Test
+    void testOrderByWithMultipleItems() throws DaxParserException {
+        String dax = "EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate] DESC, 'Sales'[Amount]";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.orderBy()).hasSize(2);
+
+        OrderByItem first = evalStmt.orderBy().get(0);
+        assertThat(first.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+        assertThat(first.expression()).isInstanceOf(Identifier.class);
+        Identifier firstColumn = (Identifier) first.expression();
+        assertThat(firstColumn.parts()).hasSize(2);
+        assertThat(firstColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) firstColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(firstColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) firstColumn.parts().get(1)).name()).isEqualToIgnoringCase("OrderDate");
+
+        OrderByItem second = evalStmt.orderBy().get(1);
+        assertThat(second.direction()).isEqualTo(OrderByItem.SortDirection.ASC);
+        assertThat(second.expression()).isInstanceOf(Identifier.class);
+        Identifier secondColumn = (Identifier) second.expression();
+        assertThat(secondColumn.parts()).hasSize(2);
+        assertThat(secondColumn.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) secondColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(secondColumn.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) secondColumn.parts().get(1)).name()).isEqualToIgnoringCase("Amount");
+    }
+
+    @Test
+    void testOrderByWithBlanksFirstIsRejected() {
+        // BLANKS FIRST is not part of the DAX ORDER BY grammar
+        String dax = "EVALUATE 'Sales' ORDER BY [Amount] BLANKS FIRST";
+        assertThatExceptionOfType(DaxParserException.class)
+        .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testOrderByWithBlanksLastIsRejected() {
+        // BLANKS LAST is not part of the DAX ORDER BY grammar
+        String dax = "EVALUATE 'Sales' ORDER BY [Amount] BLANKS LAST";
+        assertThatExceptionOfType(DaxParserException.class)
+        .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testOrderByWithUnqualifiedColumnReferences() throws DaxParserException {
+        String dax = "EVALUATE 'Sales' ORDER BY [Year] DESC, [Amount] ASC";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(Entity.class);
+        assertThat(((Entity) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(evalStmt.orderBy()).hasSize(2);
+
+        OrderByItem first = evalStmt.orderBy().get(0);
+        assertThat(first.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+        assertThat(first.expression()).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) first.expression()).name()).isEqualToIgnoringCase("Year");
+
+        OrderByItem second = evalStmt.orderBy().get(1);
+        assertThat(second.direction()).isEqualTo(OrderByItem.SortDirection.ASC);
+        assertThat(second.expression()).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) second.expression()).name()).isEqualToIgnoringCase("Amount");
+    }
+
+    @Test
+    void testFunctionCallTableExpressionWithOrderByClause() throws DaxParserException {
+        String dax = """
+                EVALUATE
+                SUMMARIZE(
+                    'Sales',
+                    'Product'[Category],
+                    "Total Sales", SUM('Sales'[Amount])
+                )
+                ORDER BY [Total Sales] DESC""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("SUMMARIZE");
+        assertThat(fc.arguments()).hasSize(4);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) fc.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(Identifier.class);
+        Identifier groupByColumn = (Identifier) fc.arguments().get(1);
+        assertThat(groupByColumn.parts()).hasSize(2);
+        assertThat(((Entity) groupByColumn.parts().get(0)).name()).isEqualToIgnoringCase("Product");
+        assertThat(((Scalar) groupByColumn.parts().get(1)).name()).isEqualToIgnoringCase("Category");
+
+        assertThat(fc.arguments().get(2)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(2)).value()).isEqualTo("Total Sales");
+
+        assertThat(fc.arguments().get(3)).isInstanceOf(FunctionCall.class);
+        FunctionCall sumCall = (FunctionCall) fc.arguments().get(3);
+        assertThat(sumCall.functionName()).isEqualToIgnoringCase("SUM");
+        assertThat(sumCall.arguments()).hasSize(1);
+        Identifier sumColumn = (Identifier) sumCall.arguments().get(0);
+        assertThat(((Entity) sumColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(((Scalar) sumColumn.parts().get(1)).name()).isEqualToIgnoringCase("Amount");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem orderByItem = evalStmt.orderBy().get(0);
+        assertThat(orderByItem.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+        assertThat(orderByItem.expression()).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) orderByItem.expression()).name()).isEqualToIgnoringCase("Total Sales");
+    }
+
+    @Test
+    void testFunctionCallWithLogicalExpressionArgument() throws DaxParserException {
+        String dax = "EVALUATE FILTER('Sales', 'Sales'[Amount] > 100 && 'Sales'[Region] <> \"North\")";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("FILTER");
+        assertThat(fc.arguments()).hasSize(2);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) fc.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(LogicalExpression.class);
+        LogicalExpression condition = (LogicalExpression) fc.arguments().get(1);
+        assertThat(condition.operator()).isEqualTo(LogicalExpression.LogicalOperator.AND);
+
+        assertThat(condition.left()).isInstanceOf(BooleanExpression.class);
+        BooleanExpression amountFilter = (BooleanExpression) condition.left();
+        assertThat(amountFilter.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN);
+        assertThat(amountFilter.left()).isInstanceOf(Identifier.class);
+        Identifier amountColumn = (Identifier) amountFilter.left();
+        assertThat(((Entity) amountColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(((Scalar) amountColumn.parts().get(1)).name()).isEqualToIgnoringCase("Amount");
+        assertThat(amountFilter.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) amountFilter.right()).value()).isEqualTo(new BigDecimal("100"));
+
+        assertThat(condition.right()).isInstanceOf(BooleanExpression.class);
+        BooleanExpression regionFilter = (BooleanExpression) condition.right();
+        assertThat(regionFilter.operator()).isEqualTo(BooleanExpression.BooleanOperator.NOT_EQUAL);
+        assertThat(regionFilter.left()).isInstanceOf(Identifier.class);
+        Identifier regionColumn = (Identifier) regionFilter.left();
+        assertThat(((Entity) regionColumn.parts().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(((Scalar) regionColumn.parts().get(1)).name()).isEqualToIgnoringCase("Region");
+        assertThat(regionFilter.right()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) regionFilter.right()).value()).isEqualTo("North");
     }
 
 }

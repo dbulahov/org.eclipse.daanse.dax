@@ -117,7 +117,9 @@ Keyword#Keyword :
 // SMART_NODE_CREATION collapses it to that Entity, matching the plain
 // 'Sales' case unchanged; with one, #Identifier(2) folds the Entity and the
 // bracketed Scalar into a single Identifier node whose parts() is
-// [Entity, Scalar].
+// [Entity, Scalar]. A column can also stand alone with no entity qualifier
+// at all, e.g. [Year] in an ORDER BY clause - see the bare COLUMN_REFERENCE
+// alternative in PrimaryExpression below, which yields a plain Scalar node.
 EntityReference#void :
    < ENTITY_NAME >
    [
@@ -166,6 +168,8 @@ PrimaryExpression#void :
    < DATE_TIME_LITERAL >
    |
    EntityReference
+   |
+   < COLUMN_REFERENCE >
 ;
 
 INJECT ArithmeticExpression :
