@@ -21,9 +21,13 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import org.eclipse.daanse.dax.model.api.ColumnDefinition;
 import org.eclipse.daanse.dax.model.api.DaxStatement;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.api.MeasureDefinition;
 import org.eclipse.daanse.dax.model.api.OrderByItem;
+import org.eclipse.daanse.dax.model.api.TableDefinition;
+import org.eclipse.daanse.dax.model.api.VariableDefinition;
 import org.eclipse.daanse.dax.model.api.expression.ArithmeticExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
@@ -1183,6 +1187,348 @@ class ParserTest {
         assertThat(((Scalar) regionColumn.parts().get(1)).name()).isEqualToIgnoringCase("Region");
         assertThat(regionFilter.right()).isInstanceOf(StringLiteral.class);
         assertThat(((StringLiteral) regionFilter.right()).value()).isEqualTo("North");
+    }
+
+    private void assertIsColumn(Identifier identifier, String entityName, String columnName) {
+        assertThat(identifier.parts()).hasSize(2);
+        assertThat(identifier.parts().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) identifier.parts().get(0)).name()).isEqualToIgnoringCase(entityName);
+        assertThat(identifier.parts().get(1)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) identifier.parts().get(1)).name()).isEqualToIgnoringCase(columnName);
+    }
+
+    @Test
+    void testDefineClauseWithMeasures() throws DaxParserException {
+        String dax = """
+                DEFINE
+                    MEASURE 'Sales'[Total Amount] = SUM('Sales'[Amount]),
+                    MEASURE 'Sales'[Average Amount] = AVERAGE('Sales'[Amount]),
+                    MEASURE 'Sales'[Order Count] = COUNTROWS('Sales')
+                EVALUATE
+                SUMMARIZECOLUMNS(
+                    'Product'[Category],
+                    "Total", [Total Amount],
+                    "Average", [Average Amount],
+                    "Orders", [Order Count]
+                )
+                ORDER BY [Total] DESC""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(3);
+
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(MeasureDefinition.class);
+        MeasureDefinition totalAmount = (MeasureDefinition) stmt.defineClauses().get(0);
+        assertIsColumn(totalAmount.name(), "Sales", "Total Amount");
+        assertThat(totalAmount.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall totalAmountExpr = (FunctionCall) totalAmount.expression();
+        assertThat(totalAmountExpr.functionName()).isEqualToIgnoringCase("SUM");
+        assertIsColumn((Identifier) totalAmountExpr.arguments().get(0), "Sales", "Amount");
+
+        assertThat(stmt.defineClauses().get(1)).isInstanceOf(MeasureDefinition.class);
+        MeasureDefinition averageAmount = (MeasureDefinition) stmt.defineClauses().get(1);
+        assertIsColumn(averageAmount.name(), "Sales", "Average Amount");
+        assertThat(averageAmount.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall averageAmountExpr = (FunctionCall) averageAmount.expression();
+        assertThat(averageAmountExpr.functionName()).isEqualToIgnoringCase("AVERAGE");
+        assertIsColumn((Identifier) averageAmountExpr.arguments().get(0), "Sales", "Amount");
+
+        assertThat(stmt.defineClauses().get(2)).isInstanceOf(MeasureDefinition.class);
+        MeasureDefinition orderCount = (MeasureDefinition) stmt.defineClauses().get(2);
+        assertIsColumn(orderCount.name(), "Sales", "Order Count");
+        assertThat(orderCount.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall orderCountExpr = (FunctionCall) orderCount.expression();
+        assertThat(orderCountExpr.functionName()).isEqualToIgnoringCase("COUNTROWS");
+        assertThat(orderCountExpr.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) orderCountExpr.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("SUMMARIZECOLUMNS");
+        assertThat(fc.arguments()).hasSize(7);
+
+        assertIsColumn((Identifier) fc.arguments().get(0), "Product", "Category");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(1)).value()).isEqualTo("Total");
+        assertThat(fc.arguments().get(2)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) fc.arguments().get(2)).name()).isEqualToIgnoringCase("Total Amount");
+
+        assertThat(fc.arguments().get(3)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(3)).value()).isEqualTo("Average");
+        assertThat(fc.arguments().get(4)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) fc.arguments().get(4)).name()).isEqualToIgnoringCase("Average Amount");
+
+        assertThat(fc.arguments().get(5)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(5)).value()).isEqualTo("Orders");
+        assertThat(fc.arguments().get(6)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) fc.arguments().get(6)).name()).isEqualToIgnoringCase("Order Count");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem orderByItem = evalStmt.orderBy().get(0);
+        assertThat(orderByItem.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+        assertThat(orderByItem.expression()).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) orderByItem.expression()).name()).isEqualToIgnoringCase("Total");
+    }
+
+    @Test
+    void testDaxStatementWithoutDefineClauseHasNoMeasures() throws DaxParserException {
+        String dax = "EVALUATE 'Sales'";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).isEmpty();
+    }
+
+    @Test
+    void testTableDefinitionInDefineClause() throws DaxParserException {
+        String dax = """
+                DEFINE
+                    TABLE TopProducts =
+                        TOPN(
+                            10,
+                            'Product',
+                            CALCULATE(SUM('Sales'[Amount])),
+                            DESC
+                        )
+                EVALUATE
+                TopProducts
+                ORDER BY 'Product'[ProductName] ASC""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(1);
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(TableDefinition.class);
+        TableDefinition topProducts = (TableDefinition) stmt.defineClauses().get(0);
+        assertThat(topProducts.name()).isEqualToIgnoringCase("TopProducts");
+
+        assertThat(topProducts.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall topn = (FunctionCall) topProducts.expression();
+        assertThat(topn.functionName()).isEqualToIgnoringCase("TOPN");
+        assertThat(topn.arguments()).hasSize(4);
+
+        assertThat(topn.arguments().get(0)).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) topn.arguments().get(0)).value()).isEqualTo(new BigDecimal("10"));
+
+        assertThat(topn.arguments().get(1)).isInstanceOf(Entity.class);
+        assertThat(((Entity) topn.arguments().get(1)).name()).isEqualToIgnoringCase("Product");
+
+        assertThat(topn.arguments().get(2)).isInstanceOf(FunctionCall.class);
+        FunctionCall calculate = (FunctionCall) topn.arguments().get(2);
+        assertThat(calculate.functionName()).isEqualToIgnoringCase("CALCULATE");
+        assertThat(calculate.arguments()).hasSize(1);
+        assertThat(calculate.arguments().get(0)).isInstanceOf(FunctionCall.class);
+        FunctionCall sum = (FunctionCall) calculate.arguments().get(0);
+        assertThat(sum.functionName()).isEqualToIgnoringCase("SUM");
+        assertIsColumn((Identifier) sum.arguments().get(0), "Sales", "Amount");
+
+        assertThat(topn.arguments().get(3)).isInstanceOf(Keyword.class);
+        assertThat(((Keyword) topn.arguments().get(3)).name()).isEqualToIgnoringCase("DESC");
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(Keyword.class);
+        assertThat(((Keyword) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("TopProducts");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem orderByItem = evalStmt.orderBy().get(0);
+        assertThat(orderByItem.direction()).isEqualTo(OrderByItem.SortDirection.ASC);
+        assertIsColumn((Identifier) orderByItem.expression(), "Product", "ProductName");
+    }
+
+    @Test
+    void testColumnDefinitionInDefineClause() throws DaxParserException {
+        String dax = """
+                DEFINE
+                    COLUMN 'Sales'[Amount Category] =
+                        IF('Sales'[Amount] > 1000, "High", "Low")
+                EVALUATE
+                SUMMARIZE(
+                    'Sales',
+                    'Sales'[Amount Category],
+                    "Total", SUM('Sales'[Amount])
+                )""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(1);
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(ColumnDefinition.class);
+        ColumnDefinition amountCategory = (ColumnDefinition) stmt.defineClauses().get(0);
+        assertIsColumn(amountCategory.name(), "Sales", "Amount Category");
+
+        assertThat(amountCategory.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall ifCall = (FunctionCall) amountCategory.expression();
+        assertThat(ifCall.functionName()).isEqualToIgnoringCase("IF");
+        assertThat(ifCall.arguments()).hasSize(3);
+
+        assertThat(ifCall.arguments().get(0)).isInstanceOf(BooleanExpression.class);
+        BooleanExpression condition = (BooleanExpression) ifCall.arguments().get(0);
+        assertThat(condition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN);
+        assertIsColumn((Identifier) condition.left(), "Sales", "Amount");
+        assertThat(condition.right()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) condition.right()).value()).isEqualTo(new BigDecimal("1000"));
+
+        assertThat(ifCall.arguments().get(1)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) ifCall.arguments().get(1)).value()).isEqualTo("High");
+        assertThat(ifCall.arguments().get(2)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) ifCall.arguments().get(2)).value()).isEqualTo("Low");
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("SUMMARIZE");
+        assertThat(fc.arguments()).hasSize(4);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) fc.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(Identifier.class);
+        assertIsColumn((Identifier) fc.arguments().get(1), "Sales", "Amount Category");
+
+        assertThat(fc.arguments().get(2)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(2)).value()).isEqualTo("Total");
+
+        assertThat(fc.arguments().get(3)).isInstanceOf(FunctionCall.class);
+        FunctionCall sumCall = (FunctionCall) fc.arguments().get(3);
+        assertThat(sumCall.functionName()).isEqualToIgnoringCase("SUM");
+        assertIsColumn((Identifier) sumCall.arguments().get(0), "Sales", "Amount");
+    }
+
+    @Test
+    void testDefineClauseWithAllDefinitionKinds() throws DaxParserException {
+        String dax = """
+                DEFINE
+                    MEASURE 'Sales'[Total Amount] = SUM('Sales'[Amount]),
+                    TABLE HighValueSales =
+                        FILTER('Sales', 'Sales'[Amount] > 1000),
+                    COLUMN 'Sales'[IsHigh] = 'Sales'[Amount] > 1000
+                EVALUATE
+                SUMMARIZECOLUMNS(
+                    'Product'[Category],
+                    "Total High Value", CALCULATE([Total Amount], HighValueSales)
+                )""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(3);
+
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(MeasureDefinition.class);
+        MeasureDefinition totalAmount = (MeasureDefinition) stmt.defineClauses().get(0);
+        assertIsColumn(totalAmount.name(), "Sales", "Total Amount");
+        assertThat(totalAmount.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall sumCall = (FunctionCall) totalAmount.expression();
+        assertThat(sumCall.functionName()).isEqualToIgnoringCase("SUM");
+        assertIsColumn((Identifier) sumCall.arguments().get(0), "Sales", "Amount");
+
+        assertThat(stmt.defineClauses().get(1)).isInstanceOf(TableDefinition.class);
+        TableDefinition highValueSales = (TableDefinition) stmt.defineClauses().get(1);
+        assertThat(highValueSales.name()).isEqualToIgnoringCase("HighValueSales");
+        assertThat(highValueSales.expression()).isInstanceOf(FunctionCall.class);
+        FunctionCall filterCall = (FunctionCall) highValueSales.expression();
+        assertThat(filterCall.functionName()).isEqualToIgnoringCase("FILTER");
+        assertThat(filterCall.arguments()).hasSize(2);
+        assertThat(filterCall.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) filterCall.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+        assertThat(filterCall.arguments().get(1)).isInstanceOf(BooleanExpression.class);
+        BooleanExpression filterCondition = (BooleanExpression) filterCall.arguments().get(1);
+        assertThat(filterCondition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN);
+        assertIsColumn((Identifier) filterCondition.left(), "Sales", "Amount");
+        assertThat(((NumericLiteral) filterCondition.right()).value()).isEqualTo(new BigDecimal("1000"));
+
+        assertThat(stmt.defineClauses().get(2)).isInstanceOf(ColumnDefinition.class);
+        ColumnDefinition isHigh = (ColumnDefinition) stmt.defineClauses().get(2);
+        assertIsColumn(isHigh.name(), "Sales", "IsHigh");
+        assertThat(isHigh.expression()).isInstanceOf(BooleanExpression.class);
+        BooleanExpression isHighCondition = (BooleanExpression) isHigh.expression();
+        assertThat(isHighCondition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN);
+        assertIsColumn((Identifier) isHighCondition.left(), "Sales", "Amount");
+        assertThat(((NumericLiteral) isHighCondition.right()).value()).isEqualTo(new BigDecimal("1000"));
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("SUMMARIZECOLUMNS");
+        assertThat(fc.arguments()).hasSize(3);
+
+        assertIsColumn((Identifier) fc.arguments().get(0), "Product", "Category");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) fc.arguments().get(1)).value()).isEqualTo("Total High Value");
+
+        assertThat(fc.arguments().get(2)).isInstanceOf(FunctionCall.class);
+        FunctionCall calculateCall = (FunctionCall) fc.arguments().get(2);
+        assertThat(calculateCall.functionName()).isEqualToIgnoringCase("CALCULATE");
+        assertThat(calculateCall.arguments()).hasSize(2);
+        assertThat(calculateCall.arguments().get(0)).isInstanceOf(Scalar.class);
+        assertThat(((Scalar) calculateCall.arguments().get(0)).name()).isEqualToIgnoringCase("Total Amount");
+        assertThat(calculateCall.arguments().get(1)).isInstanceOf(Keyword.class);
+        assertThat(((Keyword) calculateCall.arguments().get(1)).name()).isEqualToIgnoringCase("HighValueSales");
+    }
+
+    @Test
+    void testBooleanExpressionWithInOperator() throws DaxParserException {
+        String dax = "EVALUATE FILTER('Markets', 'Markets'[Territory] IN {\"EMEA\", \"APAC\"})";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("FILTER");
+        assertThat(fc.arguments()).hasSize(2);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) fc.arguments().get(0)).name()).isEqualToIgnoringCase("Markets");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(BooleanExpression.class);
+        BooleanExpression membership = (BooleanExpression) fc.arguments().get(1);
+        assertThat(membership.operator()).isEqualTo(BooleanExpression.BooleanOperator.IN);
+        assertIsColumn((Identifier) membership.left(), "Markets", "Territory");
+
+        assertThat(membership.right()).isInstanceOf(TableConstructor.class);
+        TableConstructor territories = (TableConstructor) membership.right();
+        assertThat(territories.rows()).hasSize(2);
+        assertThat(territories.rows().get(0).columns()).hasSize(1);
+        assertThat(territories.rows().get(0).columns().get(0)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) territories.rows().get(0).columns().get(0)).value()).isEqualTo("EMEA");
+        assertThat(territories.rows().get(1).columns().get(0)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) territories.rows().get(1).columns().get(0)).value()).isEqualTo("APAC");
+    }
+
+    @Test
+    void testVariableDefinitionInDefineClause() throws DaxParserException {
+        String dax = """
+                DEFINE
+                    VAR __minAmount = 1000
+                EVALUATE
+                FILTER(
+                    'Sales',
+                    'Sales'[Amount] >= __minAmount
+                )
+                ORDER BY 'Sales'[Amount] DESC""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(1);
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(VariableDefinition.class);
+        VariableDefinition minAmount = (VariableDefinition) stmt.defineClauses().get(0);
+        assertThat(minAmount.name()).isEqualTo("__minAmount");
+        assertThat(minAmount.expression()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) minAmount.expression()).value()).isEqualTo(new BigDecimal("1000"));
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall fc = (FunctionCall) evalStmt.tableExpression();
+        assertThat(fc.functionName()).isEqualToIgnoringCase("FILTER");
+        assertThat(fc.arguments()).hasSize(2);
+
+        assertThat(fc.arguments().get(0)).isInstanceOf(Entity.class);
+        assertThat(((Entity) fc.arguments().get(0)).name()).isEqualToIgnoringCase("Sales");
+
+        assertThat(fc.arguments().get(1)).isInstanceOf(BooleanExpression.class);
+        BooleanExpression condition = (BooleanExpression) fc.arguments().get(1);
+        assertThat(condition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN_OR_EQUAL);
+        assertIsColumn((Identifier) condition.left(), "Sales", "Amount");
+        assertThat(condition.right()).isInstanceOf(Keyword.class);
+        assertThat(((Keyword) condition.right()).name()).isEqualTo("__minAmount");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem orderByItem = evalStmt.orderBy().get(0);
+        assertThat(orderByItem.direction()).isEqualTo(OrderByItem.SortDirection.DESC);
+        assertIsColumn((Identifier) orderByItem.expression(), "Sales", "Amount");
     }
 
 }

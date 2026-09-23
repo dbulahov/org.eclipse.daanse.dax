@@ -19,10 +19,12 @@ package org.eclipse.daanse.dax.model.api.expression;
 public non-sealed interface BooleanExpression extends DaxExpression {
 
     /**
-     * The comparison operators supported by DAX.
+     * The comparison operators supported by DAX. {@link #IN} tests
+     * membership of the left-hand operand in the right-hand operand, e.g.
+     * {@code [Territory] IN {"EMEA", "APAC"}}.
      */
     enum BooleanOperator {
-        EQUAL, NOT_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, GREATER_THAN, GREATER_THAN_OR_EQUAL
+        EQUAL, NOT_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, GREATER_THAN, GREATER_THAN_OR_EQUAL, IN
     }
 
     /**

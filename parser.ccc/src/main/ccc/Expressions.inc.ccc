@@ -299,6 +299,7 @@ INJECT BooleanExpression :
          case GREATER_THAN_OR_EQUAL -> BooleanOperator.GREATER_THAN_OR_EQUAL;
          case EQUAL -> BooleanOperator.EQUAL;
          case NOT_EQUAL -> BooleanOperator.NOT_EQUAL;
+         case IN -> BooleanOperator.IN;
          default -> throw new IllegalStateException("Unexpected comparison operator: " + op.getType());
       };
    }
@@ -315,10 +316,14 @@ INJECT BooleanExpression :
 // (rather than ArithmeticExpression/PrimaryExpression directly) makes
 // arithmetic and string concatenation bind tighter than comparison, e.g.
 // 6 + 5 < 20 is (6 + 5) < 20, and "a" & "b" = "ab" is ("a" & "b") = "ab".
+// IN's right-hand side is ordinary StringExpression syntax too, not a
+// dedicated grammar shape: {"EMEA", "APAC"} already parses down through
+// StringExpression -> ... -> PrimaryExpression -> TableConstructor on its
+// own, so [Territory] IN {"EMEA", "APAC"} needs no special-casing here.
 BooleanExpression :
    StringExpression
    [
-      ( < LESS_THAN > | < LESS_THAN_OR_EQUAL > | < GREATER_THAN > | < GREATER_THAN_OR_EQUAL > | < EQUAL > | < NOT_EQUAL > )
+      ( < LESS_THAN > | < LESS_THAN_OR_EQUAL > | < GREATER_THAN > | < GREATER_THAN_OR_EQUAL > | < EQUAL > | < NOT_EQUAL > | < IN > )
       StringExpression
    ]
 ;
