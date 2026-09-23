@@ -12,6 +12,8 @@
  */
 package org.eclipse.daanse.dax.model.api;
 
+import java.util.Optional;
+
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
 
 /**
@@ -30,6 +32,14 @@ public interface OrderByItem {
      *         given explicitly
      */
     SortDirection direction();
+
+    /**
+     * @return the paging start value for this item, e.g. the {@code 50} in
+     *         {@code ORDER BY 'Product'[ProductKey] ASC START AT 50}; empty
+     *         when the {@code ORDER BY} clause has no {@code START AT}, or
+     *         has fewer {@code START AT} values than {@code ORDER BY} items
+     */
+    Optional<DaxExpression> startAt();
 
     /**
      * The direction an {@link OrderByItem} sorts by.

@@ -27,10 +27,17 @@ TOKEN :
 // stays a plain IDENTIFIER (see OrderByItem in Statements.inc.ccc), the same
 // one already used for a bare Keyword value such as the DESC argument of
 // TOPN(...) - reserving ASC/DESC too would break that unrelated usage.
+// Keywords for the optional START AT clause of an ORDER BY, e.g.
+// EVALUATE 'Product' ORDER BY 'Product'[ProductKey] ASC START AT 50.
+// Reserved for the same reason as ORDER/BY.
 TOKEN :
    < ORDER : "ORDER" >
    |
    < BY : "BY" >
+   |
+   < START : "START" >
+   |
+   < AT : "AT" >
 ;
 
 // Keywords for the optional DEFINE clause of a DaxStatement, e.g.

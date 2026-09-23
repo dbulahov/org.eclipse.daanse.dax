@@ -1769,4 +1769,97 @@ class ParserTest {
         assertThat(((Parameter) evalStmt.tableExpression()).name()).isEqualTo("FilteredSales");
     }
 
+    @Test
+    void testOrderByWithStartAtClause() throws DaxParserException {
+        String dax = """
+                EVALUATE 'Product'
+                ORDER BY 'Product'[ProductKey] ASC
+                START AT 50""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(Entity.class);
+        assertThat(((Entity) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("Product");
+
+        assertThat(evalStmt.orderBy()).hasSize(1);
+        OrderByItem orderByItem = evalStmt.orderBy().get(0);
+        assertThat(orderByItem.direction()).isEqualTo(OrderByItem.SortDirection.ASC);
+        assertIsColumn((Identifier) orderByItem.expression(), "Product", "ProductKey");
+
+        assertThat(orderByItem.startAt()).isPresent();
+        assertThat(orderByItem.startAt().get()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) orderByItem.startAt().get()).value()).isEqualTo(new BigDecimal("50"));
+    }
+
+    @Test
+    void testOrderByItemWithoutStartAtHasNoStartAtValue() throws DaxParserException {
+        String dax = "EVALUATE 'Sales' ORDER BY 'Sales'[Amount] DESC";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.evaluateStatements().get(0).orderBy().get(0).startAt()).isEmpty();
+    }
+
+    @Test
+    void testStartAtWithMultipleParenthesizedValuesMatchesOrderByItemsPositionally() throws DaxParserException {
+        // more than one START AT value must be parenthesized, like a
+        // RowConstructor's explicit multi-column form
+        String dax = "EVALUATE 'Product' ORDER BY 'Product'[Category] ASC, 'Product'[ProductKey] DESC "
+                + "START AT (\"Bikes\", 50)";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.orderBy()).hasSize(2);
+
+        OrderByItem first = evalStmt.orderBy().get(0);
+        assertThat(first.startAt()).isPresent();
+        assertThat(first.startAt().get()).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) first.startAt().get()).value()).isEqualTo("Bikes");
+
+        OrderByItem second = evalStmt.orderBy().get(1);
+        assertThat(second.startAt()).isPresent();
+        assertThat(second.startAt().get()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) second.startAt().get()).value()).isEqualTo(new BigDecimal("50"));
+    }
+
+    @Test
+    void testStartAtWithASingleParenthesizedValue() throws DaxParserException {
+        // a single value may be parenthesized too, same as a bare value
+        String dax = """
+                EVALUATE 'Product'
+                ORDER BY 'Product'[ProductKey] ASC
+                START AT (50)""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        OrderByItem orderByItem = stmt.evaluateStatements().get(0).orderBy().get(0);
+        assertThat(orderByItem.startAt()).isPresent();
+        assertThat(orderByItem.startAt().get()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) orderByItem.startAt().get()).value()).isEqualTo(new BigDecimal("50"));
+    }
+
+    @Test
+    void testStartAtWithFewerValuesThanOrderByColumnsThrows() {
+        // two ORDER BY columns but only one START AT value: ambiguous which
+        // column it starts by, so this is rejected rather than silently
+        // leaving the second column's start value undetermined
+        String dax = """
+                EVALUATE 'Sales'
+                ORDER BY 'Sales'[CustomerID] ASC, 'Sales'[OrderDate] DESC
+                START AT (100)""";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testStartAtWithMoreValuesThanOrderByColumnsThrows() {
+        // one ORDER BY column but two START AT values: DAX does not define
+        // what to do with the leftover value, so this is rejected too, not
+        // silently ignored
+        String dax = """
+                EVALUATE 'Sales'
+                ORDER BY 'Sales'[CustomerID] ASC
+                START AT (100, DATE(2024, 1, 1))""";
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
 }

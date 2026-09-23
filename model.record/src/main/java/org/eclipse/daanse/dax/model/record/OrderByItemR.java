@@ -13,6 +13,7 @@
 package org.eclipse.daanse.dax.model.record;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import org.eclipse.daanse.dax.model.api.OrderByItem;
 import org.eclipse.daanse.dax.model.api.OrderByItem.SortDirection;
@@ -25,11 +26,28 @@ import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
  *            the expression to sort by
  * @param direction
  *            the sort direction
+ * @param startAt
+ *            the paging start value for this item
  */
-public record OrderByItemR(DaxExpression expression, SortDirection direction) implements OrderByItem {
+public record OrderByItemR(DaxExpression expression, SortDirection direction, Optional<DaxExpression> startAt)
+        implements OrderByItem {
 
     public OrderByItemR {
         Objects.requireNonNull(expression, "expression must not be null");
         Objects.requireNonNull(direction, "direction must not be null");
+        Objects.requireNonNull(startAt, "startAt must not be null");
+    }
+
+    /**
+     * Convenience constructor for an {@code ORDER BY} item with no
+     * {@code START AT} value.
+     *
+     * @param expression
+     *            the expression to sort by
+     * @param direction
+     *            the sort direction
+     */
+    public OrderByItemR(DaxExpression expression, SortDirection direction) {
+        this(expression, direction, Optional.empty());
     }
 }
