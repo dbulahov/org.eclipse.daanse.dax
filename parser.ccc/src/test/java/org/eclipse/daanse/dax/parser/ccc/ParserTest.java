@@ -28,6 +28,7 @@ import org.eclipse.daanse.dax.model.api.expression.BooleanExpression;
 import org.eclipse.daanse.dax.model.api.expression.BooleanLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DateTimeLiteral;
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
+import org.eclipse.daanse.dax.model.api.expression.Entity;
 import org.eclipse.daanse.dax.model.api.expression.LogicalExpression;
 import org.eclipse.daanse.dax.model.api.expression.NumericLiteral;
 import org.eclipse.daanse.dax.model.api.expression.RowConstructor;
@@ -779,5 +780,19 @@ class ParserTest {
         assertThat(inner.right()).isInstanceOf(StringLiteral.class);
         assertThat(((StringLiteral) inner.right()).value()).isEqualTo("c");
     }
+
+    @Test
+    void testEntity1() throws DaxParserException {
+        String dax = "EVALUATE 'Sales'";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.evaluateStatements()).hasSize(1);
+        EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
+        assertThat(evalStmt.tableExpression()).isInstanceOf(Entity.class);
+        Entity entity = (Entity) evalStmt.tableExpression();
+        assertThat(entity.name()).isEqualTo("Sales");
+    }
+
+    
 
 }
