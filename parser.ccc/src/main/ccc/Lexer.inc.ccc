@@ -19,6 +19,20 @@ TOKEN :
    < EVALUATE : "EVALUATE" >
 ;
 
+// Keywords for the optional ORDER BY clause of an EvaluateStatement, e.g.
+// EVALUATE 'Sales' ORDER BY 'Sales'[OrderDate] DESC. Declared as reserved
+// tokens (like EVALUATE above), not as generic IDENTIFIERs, so
+// EvaluateStatement can recognize the clause by token type alone. The
+// trailing ASC/DESC direction is deliberately NOT a reserved token here: it
+// stays a plain IDENTIFIER (see OrderByItem in Statements.inc.ccc), the same
+// one already used for a bare Keyword value such as the DESC argument of
+// TOPN(...) - reserving ASC/DESC too would break that unrelated usage.
+TOKEN :
+   < ORDER : "ORDER" >
+   |
+   < BY : "BY" >
+;
+
 // Boolean literals share the BooleanLiteral node class: each token
 // occurrence becomes a BooleanLiteral node, distinguished at runtime by its
 // own token type (TRUE vs. FALSE).

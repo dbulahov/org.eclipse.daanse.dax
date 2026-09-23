@@ -12,9 +12,11 @@
  */
 package org.eclipse.daanse.dax.model.record;
 
+import java.util.List;
 import java.util.Objects;
 
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.api.OrderByItem;
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
 
 /**
@@ -22,10 +24,26 @@ import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
  *
  * @param tableExpression
  *            the table expression to evaluate
+ * @param orderBy
+ *            the {@code ORDER BY} items, in order
  */
-public record EvaluateStatementR(DaxExpression tableExpression) implements EvaluateStatement {
+public record EvaluateStatementR(DaxExpression tableExpression, List<OrderByItem> orderBy)
+        implements EvaluateStatement {
 
     public EvaluateStatementR {
         Objects.requireNonNull(tableExpression, "tableExpression must not be null");
+        Objects.requireNonNull(orderBy, "orderBy must not be null");
+        orderBy = List.copyOf(orderBy);
+    }
+
+    /**
+     * Convenience constructor for an {@code EVALUATE} statement with no
+     * {@code ORDER BY} clause.
+     *
+     * @param tableExpression
+     *            the table expression to evaluate
+     */
+    public EvaluateStatementR(DaxExpression tableExpression) {
+        this(tableExpression, List.of());
     }
 }

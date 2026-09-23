@@ -8,30 +8,33 @@
  * SPDX-License-Identifier: EPL-2.0
  *
  * Contributors:
- *   Stefan Bischof (bipolis.org) - initial
+ *   dbulahov - initial
  */
 package org.eclipse.daanse.dax.model.api;
-
-import java.util.List;
 
 import org.eclipse.daanse.dax.model.api.expression.DaxExpression;
 
 /**
- * Example:
- * EVALUATE Sales
- * ORDER BY Sales[OrderDate] DESC
+ * One item of an {@code ORDER BY} clause, e.g. {@code 'Sales'[OrderDate]
+ * DESC}.
  */
-public interface EvaluateStatement {
+public interface OrderByItem {
 
     /**
-     * @return the table expression to evaluate
+     * @return the expression to sort by
      */
-    DaxExpression tableExpression();
+    DaxExpression expression();
 
     /**
-     * @return the {@code ORDER BY} items, in order; empty when the
-     *         statement has no {@code ORDER BY} clause
+     * @return the sort direction; {@link SortDirection#ASC} when none is
+     *         given explicitly
      */
-    List<OrderByItem> orderBy();
+    SortDirection direction();
 
+    /**
+     * The direction an {@link OrderByItem} sorts by.
+     */
+    enum SortDirection {
+        ASC, DESC
+    }
 }
