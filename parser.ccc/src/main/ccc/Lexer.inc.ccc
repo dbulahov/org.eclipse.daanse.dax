@@ -33,6 +33,24 @@ TOKEN :
    < BY : "BY" >
 ;
 
+// Keywords for the optional DEFINE clause of a DaxStatement, e.g.
+// DEFINE MEASURE 'Sales'[Total Amount] = SUM('Sales'[Amount]) EVALUATE ...
+// or DEFINE TABLE TopProducts = TOPN(...) EVALUATE ... or
+// DEFINE COLUMN 'Sales'[Amount Category] = IF(...) EVALUATE ... or
+// DEFINE VAR __minAmount = 1000 EVALUATE ... . Reserved tokens for the same
+// reason as EVALUATE/ORDER/BY above.
+TOKEN :
+   < DEFINE : "DEFINE" >
+   |
+   < MEASURE : "MEASURE" >
+   |
+   < TABLE : "TABLE" >
+   |
+   < COLUMN : "COLUMN" >
+   |
+   < VAR : "VAR" >
+;
+
 // Boolean literals share the BooleanLiteral node class: each token
 // occurrence becomes a BooleanLiteral node, distinguished at runtime by its
 // own token type (TRUE vs. FALSE).
@@ -54,13 +72,15 @@ TOKEN #Delimiter :
    < COMMA : "," >
 ;
 
-// Comparison operators for BooleanExpression. All six alternatives share
+// Comparison operators for BooleanExpression. All seven alternatives share
 // the ComparisonOperator node class (no per-alternative #override), so
 // BooleanExpression can find the matched operator token via
 // firstChildOfType(ComparisonOperator.class) and tell which one it was via
 // getType(). Longer operators (<=, >=, <>) are matched over their shorter
 // prefixes (<, >) by the lexer's usual maximal-munch rule, so declaration
-// order here does not matter.
+// order here does not matter. IN is declared here (ahead of the generic
+// IDENTIFIER token further below) so the word "IN" is always recognized as
+// this reserved operator rather than as a generic identifier/Keyword value.
 TOKEN #ComparisonOperator :
    < LESS_THAN_OR_EQUAL : "<=" >
    |
@@ -73,6 +93,8 @@ TOKEN #ComparisonOperator :
    < GREATER_THAN : ">" >
    |
    < EQUAL : "=" >
+   |
+   < IN : "IN" >
 ;
 
 // Arithmetic operators for ArithmeticExpression. Named ArithmeticOperatorToken

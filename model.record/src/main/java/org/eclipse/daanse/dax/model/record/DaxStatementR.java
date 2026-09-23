@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 
 import org.eclipse.daanse.dax.model.api.DaxStatement;
+import org.eclipse.daanse.dax.model.api.DefineClause;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
 
 /**
@@ -24,11 +25,27 @@ import org.eclipse.daanse.dax.model.api.EvaluateStatement;
  * @param evaluateStatements
  *            the EVALUATE statements of the query, in source order; never
  *            empty
+ * @param defineClauses
+ *            the definitions of the DEFINE clause, in source order
  */
-public record DaxStatementR(List<EvaluateStatement> evaluateStatements) implements DaxStatement {
+public record DaxStatementR(List<EvaluateStatement> evaluateStatements, List<DefineClause> defineClauses)
+        implements DaxStatement {
 
     public DaxStatementR {
         Objects.requireNonNull(evaluateStatements, "evaluateStatements must not be null");
+        Objects.requireNonNull(defineClauses, "defineClauses must not be null");
         evaluateStatements = List.copyOf(evaluateStatements);
+        defineClauses = List.copyOf(defineClauses);
+    }
+
+    /**
+     * Convenience constructor for a DAX statement with no {@code DEFINE}
+     * clause.
+     *
+     * @param evaluateStatements
+     *            the EVALUATE statements of the query, in source order
+     */
+    public DaxStatementR(List<EvaluateStatement> evaluateStatements) {
+        this(evaluateStatements, List.of());
     }
 }

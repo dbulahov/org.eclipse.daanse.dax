@@ -18,17 +18,140 @@ INJECT DaxStatement :
    import java.util.List;
    implements org.eclipse.daanse.dax.model.api.DaxStatement
 {
-
    public List<org.eclipse.daanse.dax.model.api.EvaluateStatement> evaluateStatements() {
       return childrenOfType(org.eclipse.daanse.dax.model.api.EvaluateStatement.class);
+   }
+
+   public List<org.eclipse.daanse.dax.model.api.DefineClause> defineClauses() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.DefineClause.class);
    }
 }
 
 // #DaxStatement forces a definite node: with SMART_NODE_CREATION a bare
-// single-EVALUATE query would otherwise collapse to its only child.
+// single-EVALUATE query would otherwise collapse to its only child. The
+// DEFINE clause is optional and, when present, precedes every EVALUATE
+// statement rather than belonging to just one of them; its MeasureDefinition/
+// TableDefinition nodes become direct children of DaxStatement, with no
+// separate wrapper node for the clause itself - DEFINE and the COMMA tokens
+// do still push their own (EVALUATE-like / #Delimiter) nodes as usual, but
+// defineClauses() filters those out via childrenOfType(DefineClause.class) -
+// both MeasureDefinition and TableDefinition implement that sealed
+// interface, so their nodes are picked up too - the same way
+// TableConstructor's rows() already ignores its LBRACE/RBRACE/COMMA
+// Delimiter siblings.
 DaxStatement#DaxStatement :
+  [ < DEFINE > DefineClauseEntry ( < COMMA > DefineClauseEntry )* ]
   (EvaluateStatement)+
   < EOF >
+;
+
+// Void: a DEFINE clause entry is always represented by whichever concrete
+// node matched (MEASURE, TABLE, COLUMN and VAR definitions start with
+// distinct reserved keywords, so there is no ambiguity to resolve).
+DefineClauseEntry#void :
+   MeasureDefinition
+   |
+   TableDefinition
+   |
+   ColumnDefinition
+   |
+   VariableDefinition
+;
+
+INJECT MeasureDefinition :
+   implements org.eclipse.daanse.dax.model.api.MeasureDefinition
+{
+   public org.eclipse.daanse.dax.model.api.expression.Identifier name() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.Identifier.class);
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// One MEASURE definition: a fully qualified name (always Entity[Column],
+// via EntityReference) followed by the formula it is defined as, e.g.
+// MEASURE 'Sales'[Total Amount] = SUM('Sales'[Amount]). #MeasureDefinition
+// forces a definite node so it does not collapse to just its name or its
+// formula.
+MeasureDefinition#MeasureDefinition :
+   < MEASURE >
+   EntityReference
+   < EQUAL >
+   Expression
+;
+
+INJECT ColumnDefinition :
+   implements org.eclipse.daanse.dax.model.api.ColumnDefinition
+{
+   public org.eclipse.daanse.dax.model.api.expression.Identifier name() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.Identifier.class);
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class).get(1);
+   }
+}
+
+// One COLUMN definition: structurally identical to MeasureDefinition (a
+// fully qualified Entity[Column] name via EntityReference, followed by the
+// formula it is defined as), just under the COLUMN keyword instead of
+// MEASURE, e.g. COLUMN 'Sales'[Amount Category] = IF('Sales'[Amount] > 1000,
+// "High", "Low"). #ColumnDefinition forces a definite node for the same
+// reason as #MeasureDefinition above.
+ColumnDefinition#ColumnDefinition :
+   < COLUMN >
+   EntityReference
+   < EQUAL >
+   Expression
+;
+
+INJECT TableDefinition :
+   implements org.eclipse.daanse.dax.model.api.TableDefinition
+{
+   public String name() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+// One TABLE definition: a bare name (unlike MEASURE, not qualified with an
+// entity/column, since it defines a brand new table rather than a column of
+// an existing one) followed by the table expression it is defined as, e.g.
+// TABLE TopProducts = TOPN(10, 'Product', ...). #TableDefinition forces a
+// definite node so it does not collapse to just its formula.
+TableDefinition#TableDefinition :
+   < TABLE >
+   < IDENTIFIER >
+   < EQUAL >
+   Expression
+;
+
+INJECT VariableDefinition :
+   implements org.eclipse.daanse.dax.model.api.VariableDefinition
+{
+   public String name() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression expression() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+// One VAR definition: structurally identical to TableDefinition (a bare
+// name followed by the expression it is defined as), just under the VAR
+// keyword instead of TABLE, e.g. VAR __minAmount = 1000. #VariableDefinition
+// forces a definite node for the same reason as #TableDefinition above.
+VariableDefinition#VariableDefinition :
+   < VAR >
+   < IDENTIFIER >
+   < EQUAL >
+   Expression
 ;
 
 
