@@ -169,6 +169,15 @@ TOKEN :
    < NUMERIC_LITERAL : (<DIGIT>)+ ("." (<DIGIT>)+)? > #NumericLiteral
 ;
 
+// A DAX query parameter reference, e.g. @MinAmount. Self-contained like
+// ENTITY_NAME above: the leading "@" is part of the token itself, so no
+// reserved keyword is needed to introduce it and it needs no disambiguation
+// against the generic IDENTIFIER token below (that one never starts with
+// "@").
+TOKEN :
+   < PARAMETER_REFERENCE : "@" ["a"-"z","A"-"Z","_"] (["a"-"z","A"-"Z","0"-"9","_"])* > #Parameter
+;
+
 // An unquoted identifier, currently used only as a DAX function name, e.g.
 // NOW or ALL. Declared after EVALUATE/TRUE/FALSE above: on an equal-length
 // match, congocc's lexer prefers whichever token was declared first, so
@@ -218,6 +227,14 @@ INJECT PARSER_CLASS :
     */
    public static String stripBrackets(String image) {
       return image.substring(1, image.length() - 1);
+   }
+
+   /**
+    * Strips the leading {@code @} from a DAX {@link #PARAMETER_REFERENCE}
+    * token image, e.g. {@code @MinAmount} to {@code MinAmount}.
+    */
+   public static String stripAtSign(String image) {
+      return image.substring(1);
    }
 
    /**
@@ -279,6 +296,20 @@ INJECT Entity :
    public String name() {
       if (name == null) {
          name = stripSingleQuotes(getImage());
+      }
+      return name;
+   }
+}
+
+INJECT Parameter :
+   import static org.eclipse.daanse.dax.parser.ccc.DaxParser.stripAtSign;
+   implements org.eclipse.daanse.dax.model.api.expression.Parameter
+{
+   private String name;
+
+   public String name() {
+      if (name == null) {
+         name = stripAtSign(getImage());
       }
       return name;
    }

@@ -128,6 +128,23 @@ EntityReference#void :
    ]
 ;
 
+// A parameter reference, optionally further qualified by a column (Scalar)
+// reference in square brackets, e.g. @AllSales alone, or @AllSales[Amount]
+// to refer to a specific column of the table that parameter holds - the
+// same [Column] qualifier EntityReference above supports for a quoted
+// entity name. Void: with no bracket qualifier this has exactly one child
+// (the Parameter node) and SMART_NODE_CREATION collapses it to that
+// Parameter, matching the plain @AllSales case unchanged; with one,
+// #Identifier(2) folds the Parameter and the bracketed Scalar into a single
+// Identifier node whose parts() is [Parameter, Scalar].
+ParameterReference#void :
+   < PARAMETER_REFERENCE >
+   [
+      < COLUMN_REFERENCE >
+      #Identifier(2)
+   ]
+;
+
 // Void: a primary expression is always represented by whichever concrete
 // node matched; no separate wrapper node is created. A parenthesized
 // expression, e.g. (5 + 4), is likewise transparent: the parens are pure
@@ -170,6 +187,8 @@ PrimaryExpression#void :
    EntityReference
    |
    < COLUMN_REFERENCE >
+   |
+   ParameterReference
 ;
 
 INJECT ArithmeticExpression :
