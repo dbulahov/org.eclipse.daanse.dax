@@ -80,7 +80,7 @@ class RoundTripTest {
 
         assertThat(unparser.unparseDaxStatement(parse(dax))).isEqualTo("""
                 DEFINE
-                    MEASURE 'Sales'[Total] = SUM('Sales'[Amount]),
+                    MEASURE 'Sales'[Total] = SUM('Sales'[Amount])
                     VAR __min = 1000
                 EVALUATE 'Sales' ORDER BY 'Sales'[Amount] DESC, 'Sales'[Status] ASC START AT (5, "a")""");
     }

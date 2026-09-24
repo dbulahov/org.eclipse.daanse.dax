@@ -88,4 +88,27 @@ class IdentifierRTest {
 
         assertThat(a).isNotEqualTo(b);
     }
+
+    @Test
+    void ofTableBuildsASingleEntityPart() {
+        assertThat(IdentifierR.ofTable("Sales").parts()).containsExactly(new EntityR("Sales"));
+    }
+
+    @Test
+    void ofColumnBuildsAnEntityFollowedByAScalar() {
+        assertThat(IdentifierR.ofColumn("Sales", "Amount").parts())
+                .containsExactly(new EntityR("Sales"), new ScalarR("Amount"));
+    }
+
+    @Test
+    void ofMeasureBuildsASingleScalarPart() {
+        assertThat(IdentifierR.ofMeasure("Total").parts()).containsExactly(new ScalarR("Total"));
+    }
+
+    @Test
+    void factoriesRejectNullNames() {
+        assertThatNullPointerException().isThrownBy(() -> IdentifierR.ofTable(null));
+        assertThatNullPointerException().isThrownBy(() -> IdentifierR.ofColumn("Sales", null));
+        assertThatNullPointerException().isThrownBy(() -> IdentifierR.ofMeasure(null));
+    }
 }

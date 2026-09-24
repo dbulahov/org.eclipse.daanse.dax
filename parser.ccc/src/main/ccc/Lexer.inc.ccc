@@ -15,6 +15,17 @@
 
 SKIP : < WHITESPACE : (" " | "\t" | "\n" | "\r")+ > ;
 
+// DAX comments are skipped like whitespace: line comments starting with //
+// or -- (up to the end of the line) and /* ... */ block comments, which do
+// not nest. By the longest-match rule "//" and "--" win over the single
+// SLASH and MINUS operators, as in DAX itself. Inside a string, entity or
+// column name the characters are part of that token, not a comment.
+SKIP :
+   < LINE_COMMENT : ("//" | "--") (~["\n", "\r"])* >
+   |
+   < BLOCK_COMMENT : "/*" (~["*"])* "*" ("*" | ~["*", "/"] (~["*"])* "*")* "/" >
+;
+
 TOKEN :
    < EVALUATE : "EVALUATE" >
 ;

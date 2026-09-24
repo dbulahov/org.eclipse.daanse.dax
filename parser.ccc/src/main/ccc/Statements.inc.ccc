@@ -39,8 +39,13 @@ INJECT DaxStatement :
 // interface, so their nodes are picked up too - the same way
 // TableConstructor's rows() already ignores its LBRACE/RBRACE/COMMA
 // Delimiter siblings.
+// DAX itself separates the definitions of a DEFINE clause by whitespace only
+// (DEFINE VAR a = 1 VAR b = 2 EVALUATE ...); a separating comma is accepted
+// too, for compatibility. No ambiguity arises: every definition starts with
+// MEASURE/TABLE/COLUMN/VAR or a parameter reference, none of which can
+// continue the expression of the previous definition.
 DaxStatement#DaxStatement :
-  [ < DEFINE > DefineClauseEntry ( < COMMA > DefineClauseEntry )* ]
+  [ < DEFINE > DefineClauseEntry ( [ < COMMA > ] DefineClauseEntry )* ]
   (EvaluateStatement)+
   < EOF >
 ;

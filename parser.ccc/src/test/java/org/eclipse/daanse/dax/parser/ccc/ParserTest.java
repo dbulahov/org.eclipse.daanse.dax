@@ -1965,4 +1965,96 @@ class ParserTest {
         assertThat(((TableReference) stmt.evaluateStatements().get(1).tableExpression()).name()).isEqualTo("u");
     }
 
+    @Test
+    void testLineAndBlockCommentsAreSkipped() throws DaxParserException {
+        String dax = """
+                // DAX Query
+                -- dash comment
+                /* block
+                    comment */
+                DEFINE
+                    MEASURE 'Sales'[Total] = /* inline */ SUM('Sales'[Amount]), // trailing
+                    VAR x = 1 -- trailing
+                EVALUATE
+                    ROW("Value", x /* before operator */ + 1) // end""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(2);
+        MeasureDefinition total = (MeasureDefinition) stmt.defineClauses().get(0);
+        assertThat(total.expression()).isInstanceOf(FunctionCall.class);
+        assertThat(((VariableDefinition) stmt.defineClauses().get(1)).name()).isEqualTo("x");
+
+        FunctionCall row = (FunctionCall) stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(row.arguments()).hasSize(2);
+        ArithmeticExpression sum = (ArithmeticExpression) row.arguments().get(1);
+        assertThat(sum.left()).isInstanceOf(VariableReference.class);
+        assertThat(sum.operator()).isEqualTo(ArithmeticExpression.ArithmeticOperator.ADD);
+    }
+
+    @Test
+    void testCommentMarkersInsideNamesAndStringsAreNotComments() throws DaxParserException {
+        String dax = "EVALUATE FILTER('Sales // x', 'Sales // x'[a--b] = \"/* not */ -- a // comment\")";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        FunctionCall filter = (FunctionCall) stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(((Entity) filter.arguments().get(0)).name()).isEqualTo("Sales // x");
+        BooleanExpression condition = (BooleanExpression) filter.arguments().get(1);
+        assertIsColumn((Identifier) condition.left(), "Sales // x", "a--b");
+        assertThat(((StringLiteral) condition.right()).value()).isEqualTo("/* not */ -- a // comment");
+    }
+
+    @Test
+    void testDivisionIsNotAComment() throws DaxParserException {
+        String dax = "EVALUATE ROW(\"x\", 10 / 2 - 1)";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        FunctionCall row = (FunctionCall) stmt.evaluateStatements().get(0).tableExpression();
+        ArithmeticExpression minus = (ArithmeticExpression) row.arguments().get(1);
+        assertThat(minus.operator()).isEqualTo(ArithmeticExpression.ArithmeticOperator.MINUS);
+        assertThat(((ArithmeticExpression) minus.left()).operator())
+                .isEqualTo(ArithmeticExpression.ArithmeticOperator.DIVIDE);
+    }
+
+    @Test
+    void testBlockCommentEndsAtTheFirstCloser() throws DaxParserException {
+        // block comments do not nest; stars inside are fine
+        String dax = "EVALUATE /** a * b **/ 'Sales' /* x */";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.evaluateStatements().get(0).tableExpression()).isInstanceOf(Entity.class);
+    }
+
+    @Test
+    void testUnterminatedBlockCommentThrows() {
+        assertThatExceptionOfType(DaxParserException.class)
+                .isThrownBy(() -> new DaxParserWrapper("EVALUATE 'Sales' /* open").parseDaxStatement());
+    }
+
+    @Test
+    void testDefineClausesWithoutSeparatingCommas() throws DaxParserException {
+        // DAX separates definitions by whitespace only; commas stay accepted
+        String dax = """
+                DEFINE
+                    VAR a = 1
+                    MEASURE 'Sales'[M] = a + 1
+                    TABLE T = {a}
+                    COLUMN 'Sales'[C] = 2,
+                    @P = 3
+                    VAR b = VAR c = a RETURN c
+                EVALUATE T""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(stmt.defineClauses()).hasSize(6);
+        assertThat(stmt.defineClauses().get(0)).isInstanceOf(VariableDefinition.class);
+        assertThat(stmt.defineClauses().get(1)).isInstanceOf(MeasureDefinition.class);
+        assertThat(stmt.defineClauses().get(2)).isInstanceOf(TableDefinition.class);
+        assertThat(stmt.defineClauses().get(3)).isInstanceOf(ColumnDefinition.class);
+        assertThat(stmt.defineClauses().get(4)).isInstanceOf(ParameterDefinition.class);
+        // a VAR ... RETURN block as a definition's expression keeps its own VARs
+        VariableDefinition b = (VariableDefinition) stmt.defineClauses().get(5);
+        assertThat(b.expression()).isInstanceOf(VarExpression.class);
+        assertThat(((VarExpression) b.expression()).variables()).hasSize(1);
+        assertThat(stmt.evaluateStatements().get(0).tableExpression()).isInstanceOf(TableReference.class);
+    }
+
 }
