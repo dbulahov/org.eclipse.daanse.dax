@@ -110,6 +110,35 @@ Keyword#Keyword :
    < IDENTIFIER >
 ;
 
+// A bare word naming a variable declared by a VAR in scope (see
+// isVariableInScope in Lexer.inc.ccc). Chosen over Keyword by semantic
+// lookahead only, so both alternatives consume the same single token.
+INJECT VariableReference :
+   implements org.eclipse.daanse.dax.model.api.expression.VariableReference
+{
+   public String name() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+}
+
+VariableReference#VariableReference :
+   < IDENTIFIER >
+;
+
+// A bare word naming a DEFINE TABLE (see isTableDefined in Lexer.inc.ccc),
+// chosen over Keyword the same way as VariableReference.
+INJECT TableReference :
+   implements org.eclipse.daanse.dax.model.api.expression.TableReference
+{
+   public String name() {
+      return firstChildOfType(FunctionName.class).getImage();
+   }
+}
+
+TableReference#TableReference :
+   < IDENTIFIER >
+;
+
 // A table (Entity) reference, optionally further qualified by a column
 // (Scalar) reference in square brackets, e.g. 'Sales' alone, or
 // 'Sales'[Status] to refer to a specific column of that table. Void: with no
@@ -167,6 +196,10 @@ PrimaryExpression#void :
    TableConstructor
    |
    SCAN FunctionCallLA => FunctionCall
+   |
+   SCAN {isVariableInScope(getToken(1).getImage())} => VariableReference
+   |
+   SCAN {isTableDefined(getToken(1).getImage())} => TableReference
    |
    Keyword
    |
@@ -392,7 +425,35 @@ LogicalExpression :
 // future precedence levels can be inserted here without touching those call
 // sites.
 Expression#void :
+   VarExpression
+   |
    LogicalExpression
+;
+
+// VAR block: one or more VAR declarations followed by RETURN and the
+// expression the block evaluates to, e.g. VAR x = 1 RETURN ROW("Value", x).
+// It sits at the Expression level (lowest precedence), so as an operand it
+// must be parenthesized. The declarations reuse the VariableDefinition
+// production of the DEFINE clause; they are nested in this node, so
+// DaxStatement.defineClauses() (direct children only) does not pick them up.
+INJECT VarExpression :
+   implements org.eclipse.daanse.dax.model.api.expression.VarExpression
+{
+   public java.util.List<org.eclipse.daanse.dax.model.api.VariableDefinition> variables() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.VariableDefinition.class);
+   }
+
+   public org.eclipse.daanse.dax.model.api.expression.DaxExpression returnExpression() {
+      return firstChildOfType(org.eclipse.daanse.dax.model.api.expression.DaxExpression.class);
+   }
+}
+
+VarExpression#VarExpression :
+   {pushVariableScope();}
+   ( VariableDefinition )+
+   < RETURN >
+   Expression
+   {popVariableScope();}
 ;
 
 // Entry point for DaxParser#parseExpression(): parses one expression and

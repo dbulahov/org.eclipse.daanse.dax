@@ -45,6 +45,9 @@ import org.eclipse.daanse.dax.model.api.expression.RowConstructor;
 import org.eclipse.daanse.dax.model.api.expression.Scalar;
 import org.eclipse.daanse.dax.model.api.expression.StringExpression;
 import org.eclipse.daanse.dax.model.api.expression.TableConstructor;
+import org.eclipse.daanse.dax.model.api.expression.TableReference;
+import org.eclipse.daanse.dax.model.api.expression.VarExpression;
+import org.eclipse.daanse.dax.model.api.expression.VariableReference;
 import org.eclipse.daanse.dax.parser.api.DaxParserException;
 import org.eclipse.daanse.dax.parser.ccc.tree.StringLiteral;
 import org.junit.jupiter.api.Test;
@@ -1326,8 +1329,8 @@ class ParserTest {
         assertThat(((Keyword) topn.arguments().get(3)).name()).isEqualToIgnoringCase("DESC");
 
         EvaluateStatement evalStmt = stmt.evaluateStatements().get(0);
-        assertThat(evalStmt.tableExpression()).isInstanceOf(Keyword.class);
-        assertThat(((Keyword) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("TopProducts");
+        assertThat(evalStmt.tableExpression()).isInstanceOf(TableReference.class);
+        assertThat(((TableReference) evalStmt.tableExpression()).name()).isEqualToIgnoringCase("TopProducts");
 
         assertThat(evalStmt.orderBy()).hasSize(1);
         OrderByItem orderByItem = evalStmt.orderBy().get(0);
@@ -1458,8 +1461,9 @@ class ParserTest {
         assertThat(calculateCall.arguments()).hasSize(2);
         assertThat(calculateCall.arguments().get(0)).isInstanceOf(Scalar.class);
         assertThat(((Scalar) calculateCall.arguments().get(0)).name()).isEqualToIgnoringCase("Total Amount");
-        assertThat(calculateCall.arguments().get(1)).isInstanceOf(Keyword.class);
-        assertThat(((Keyword) calculateCall.arguments().get(1)).name()).isEqualToIgnoringCase("HighValueSales");
+        assertThat(calculateCall.arguments().get(1)).isInstanceOf(TableReference.class);
+        assertThat(((TableReference) calculateCall.arguments().get(1)).name())
+                .isEqualToIgnoringCase("HighValueSales");
     }
 
     @Test
@@ -1524,8 +1528,8 @@ class ParserTest {
         BooleanExpression condition = (BooleanExpression) fc.arguments().get(1);
         assertThat(condition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN_OR_EQUAL);
         assertIsColumn((Identifier) condition.left(), "Sales", "Amount");
-        assertThat(condition.right()).isInstanceOf(Keyword.class);
-        assertThat(((Keyword) condition.right()).name()).isEqualTo("__minAmount");
+        assertThat(condition.right()).isInstanceOf(VariableReference.class);
+        assertThat(((VariableReference) condition.right()).name()).isEqualTo("__minAmount");
 
         assertThat(evalStmt.orderBy()).hasSize(1);
         OrderByItem orderByItem = evalStmt.orderBy().get(0);
@@ -1560,8 +1564,8 @@ class ParserTest {
         assertThat(threshold.expression()).isInstanceOf(ArithmeticExpression.class);
         ArithmeticExpression thresholdExpr = (ArithmeticExpression) threshold.expression();
         assertThat(thresholdExpr.operator()).isEqualTo(ArithmeticExpression.ArithmeticOperator.MULTIPLY);
-        assertThat(thresholdExpr.left()).isInstanceOf(Keyword.class);
-        assertThat(((Keyword) thresholdExpr.left()).name()).isEqualTo("__baseAmount");
+        assertThat(thresholdExpr.left()).isInstanceOf(VariableReference.class);
+        assertThat(((VariableReference) thresholdExpr.left()).name()).isEqualTo("__baseAmount");
         assertThat(thresholdExpr.right()).isInstanceOf(NumericLiteral.class);
         assertThat(((NumericLiteral) thresholdExpr.right()).value()).isEqualTo(new BigDecimal("0.9"));
 
@@ -1578,8 +1582,8 @@ class ParserTest {
         BooleanExpression condition = (BooleanExpression) fc.arguments().get(1);
         assertThat(condition.operator()).isEqualTo(BooleanExpression.BooleanOperator.GREATER_THAN_OR_EQUAL);
         assertIsColumn((Identifier) condition.left(), "Sales", "Amount");
-        assertThat(condition.right()).isInstanceOf(Keyword.class);
-        assertThat(((Keyword) condition.right()).name()).isEqualTo("__threshold");
+        assertThat(condition.right()).isInstanceOf(VariableReference.class);
+        assertThat(((VariableReference) condition.right()).name()).isEqualTo("__threshold");
     }
 
     @Test
@@ -1860,6 +1864,105 @@ class ParserTest {
                 START AT (100, DATE(2024, 1, 1))""";
         assertThatExceptionOfType(DaxParserException.class)
                 .isThrownBy(() -> new DaxParserWrapper(dax).parseDaxStatement());
+    }
+
+    @Test
+    void testVarReturnExpression() throws DaxParserException {
+        String dax = """
+                EVALUATE
+                VAR x = 1
+                RETURN
+                ROW("Value", x)""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        // the VAR belongs to the expression, not to a DEFINE clause
+        assertThat(stmt.defineClauses()).isEmpty();
+        assertThat(stmt.evaluateStatements()).hasSize(1);
+
+        DaxExpression tableExpression = stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(tableExpression).isInstanceOf(VarExpression.class);
+        VarExpression varExpression = (VarExpression) tableExpression;
+
+        assertThat(varExpression.variables()).hasSize(1);
+        VariableDefinition variable = varExpression.variables().get(0);
+        assertThat(variable.name()).isEqualTo("x");
+        assertThat(variable.expression()).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) variable.expression()).value()).isEqualTo(new BigDecimal("1"));
+
+        assertThat(varExpression.returnExpression()).isInstanceOf(FunctionCall.class);
+        FunctionCall row = (FunctionCall) varExpression.returnExpression();
+        assertThat(row.functionName()).isEqualTo("ROW");
+        assertThat(row.arguments()).hasSize(2);
+        assertThat(row.arguments().get(0)).isInstanceOf(StringLiteral.class);
+        assertThat(((StringLiteral) row.arguments().get(0)).value()).isEqualTo("Value");
+        assertThat(row.arguments().get(1)).isInstanceOf(VariableReference.class);
+        assertThat(((VariableReference) row.arguments().get(1)).name()).isEqualTo("x");
+    }
+
+    @Test
+    void testVariableReferenceScopes() throws DaxParserException {
+        // x from DEFINE VAR is visible everywhere; y only in its own VAR block,
+        // after its declaration; names are case-insensitive
+        String dax = """
+                DEFINE VAR x = 1
+                EVALUATE VAR y = X RETURN ROW("a", y, "b", x)
+                EVALUATE ROW("c", y)""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        VarExpression varExpression = (VarExpression) stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(varExpression.variables().get(0).expression()).isInstanceOf(VariableReference.class);
+        FunctionCall row = (FunctionCall) varExpression.returnExpression();
+        assertThat(row.arguments().get(1)).isInstanceOf(VariableReference.class);
+        assertThat(row.arguments().get(3)).isInstanceOf(VariableReference.class);
+
+        // y is out of scope in the second EVALUATE: a plain bare word
+        FunctionCall secondRow = (FunctionCall) stmt.evaluateStatements().get(1).tableExpression();
+        assertThat(secondRow.arguments().get(1)).isInstanceOf(Keyword.class);
+    }
+
+    @Test
+    void testVariableIsNotVisibleInItsOwnDefinition() throws DaxParserException {
+        String dax = "EVALUATE VAR x = x RETURN x";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        VarExpression varExpression = (VarExpression) stmt.evaluateStatements().get(0).tableExpression();
+        assertThat(varExpression.variables().get(0).expression()).isInstanceOf(Keyword.class);
+        assertThat(varExpression.returnExpression()).isInstanceOf(VariableReference.class);
+    }
+
+    @Test
+    void testBareWordThatIsNoVariableStaysKeyword() throws DaxParserException {
+        String dax = "EVALUATE VAR n = 10 RETURN TOPN(n, 'Sales', 'Sales'[Amount], DESC)";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        FunctionCall topn = (FunctionCall) ((VarExpression) stmt.evaluateStatements().get(0).tableExpression())
+                .returnExpression();
+        assertThat(topn.arguments().get(0)).isInstanceOf(VariableReference.class);
+        assertThat(topn.arguments().get(3)).isInstanceOf(Keyword.class);
+    }
+
+    @Test
+    void testTableReferenceVisibility() throws DaxParserException {
+        // a DEFINE TABLE is visible in later clauses and all EVALUATEs, case
+        // insensitive, but not in its own definition or in earlier clauses
+        String dax = """
+                DEFINE
+                    VAR v = T,
+                    TABLE T = FILTER(T, true),
+                    TABLE U = t
+                EVALUATE T
+                EVALUATE u""";
+        DaxStatement stmt = new DaxParserWrapper(dax).parseDaxStatement();
+
+        assertThat(((VariableDefinition) stmt.defineClauses().get(0)).expression()).isInstanceOf(Keyword.class);
+        FunctionCall filter = (FunctionCall) ((TableDefinition) stmt.defineClauses().get(1)).expression();
+        assertThat(filter.arguments().get(0)).isInstanceOf(Keyword.class);
+        assertThat(((TableDefinition) stmt.defineClauses().get(2)).expression())
+                .isInstanceOf(TableReference.class);
+
+        assertThat(stmt.evaluateStatements().get(0).tableExpression()).isInstanceOf(TableReference.class);
+        assertThat(stmt.evaluateStatements().get(1).tableExpression()).isInstanceOf(TableReference.class);
+        assertThat(((TableReference) stmt.evaluateStatements().get(1).tableExpression()).name()).isEqualTo("u");
     }
 
 }

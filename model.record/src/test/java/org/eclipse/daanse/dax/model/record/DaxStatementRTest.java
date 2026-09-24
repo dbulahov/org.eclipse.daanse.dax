@@ -16,11 +16,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.eclipse.daanse.dax.model.api.DaxStatement;
+import org.eclipse.daanse.dax.model.api.DefineClause;
 import org.eclipse.daanse.dax.model.api.EvaluateStatement;
+import org.eclipse.daanse.dax.model.record.expression.NumericLiteralR;
 import org.eclipse.daanse.dax.model.record.expression.StringLiteralR;
 import org.eclipse.daanse.dax.model.record.expression.TableConstructorR;
 import org.junit.jupiter.api.Test;
@@ -88,5 +91,60 @@ class DaxStatementRTest {
         DaxStatementR b = new DaxStatementR(List.of(evaluateStatement(), evaluateStatement()));
 
         assertThat(a).isNotEqualTo(b);
+    }
+
+    private VariableDefinitionR defineClause() {
+        return new VariableDefinitionR("__minAmount", new NumericLiteralR(new BigDecimal("1000")));
+    }
+
+    @Test
+    void takesTheDefineClausesBeforeTheEvaluateStatementsLikeTheSourceText() {
+        VariableDefinitionR define = defineClause();
+        EvaluateStatementR evaluate = evaluateStatement();
+
+        DaxStatementR statement = new DaxStatementR(List.of(define), List.of(evaluate));
+
+        assertThat(statement.defineClauses()).containsExactly(define);
+        assertThat(statement.evaluateStatements()).containsExactly(evaluate);
+    }
+
+    @Test
+    void theConvenienceConstructorHasNoDefineClauses() {
+        DaxStatementR statement = new DaxStatementR(List.of(evaluateStatement()));
+
+        assertThat(statement.defineClauses()).isEmpty();
+        assertThat(statement).isEqualTo(new DaxStatementR(List.of(), List.of(evaluateStatement())));
+    }
+
+    @Test
+    void rejectsANullDefineClausesList() {
+        assertThatNullPointerException()
+                .isThrownBy(() -> new DaxStatementR(null, List.of(evaluateStatement())));
+    }
+
+    @Test
+    void copiesTheDefineClausesListSoLaterMutationOfTheSourceListIsNotReflected() {
+        List<DefineClause> source = new ArrayList<>();
+        source.add(defineClause());
+
+        DaxStatementR statement = new DaxStatementR(source, List.of(evaluateStatement()));
+        source.add(defineClause());
+
+        assertThat(statement.defineClauses()).hasSize(1);
+    }
+
+    @Test
+    void statementsWithDifferentDefineClausesAreNotEqual() {
+        DaxStatementR a = new DaxStatementR(List.of(), List.of(evaluateStatement()));
+        DaxStatementR b = new DaxStatementR(List.of(defineClause()), List.of(evaluateStatement()));
+
+        assertThat(a).isNotEqualTo(b);
+    }
+
+    @Test
+    void toStringListsTheDefineClausesFirst() {
+        String text = new DaxStatementR(List.of(defineClause()), List.of(evaluateStatement())).toString();
+
+        assertThat(text.indexOf("defineClauses")).isLessThan(text.indexOf("evaluateStatements"));
     }
 }

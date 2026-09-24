@@ -58,6 +58,12 @@ TOKEN :
    < VAR : "VAR" >
 ;
 
+// Keyword closing a VAR block inside an expression, e.g.
+// EVALUATE VAR x = 1 RETURN ROW("Value", x). Reserved like VAR above.
+TOKEN :
+   < RETURN : "RETURN" >
+;
+
 // Boolean literals share the BooleanLiteral node class: each token
 // occurrence becomes a BooleanLiteral node, distinguished at runtime by its
 // own token type (TRUE vs. FALSE).
@@ -207,6 +213,57 @@ TOKEN :
 
 INJECT PARSER_CLASS :
 {
+   /**
+    * Names of the variables in scope, innermost scope last. The bottom
+    * scope holds the DEFINE VAR clauses, visible to the whole statement;
+    * each VarExpression pushes a scope for its own VAR declarations.
+    * DAX names are case-insensitive, so names are stored upper-cased.
+    */
+   private final java.util.Deque<java.util.Set<String>> variableScopes = new java.util.ArrayDeque<>(
+         java.util.List.of(new java.util.HashSet<>()));
+
+   void pushVariableScope() {
+      variableScopes.push(new java.util.HashSet<>());
+   }
+
+   void popVariableScope() {
+      variableScopes.pop();
+   }
+
+   void declareVariable(String name) {
+      variableScopes.peek().add(name.toUpperCase(java.util.Locale.ROOT));
+   }
+
+   /**
+    * Names of the DEFINE TABLE clauses, upper-cased like variable names.
+    * Tables are only defined at statement level, so there is one scope.
+    */
+   private final java.util.Set<String> tableNames = new java.util.HashSet<>();
+
+   void declareTable(String name) {
+      tableNames.add(name.toUpperCase(java.util.Locale.ROOT));
+   }
+
+   /**
+    * @return whether a DEFINE TABLE declares the given name
+    */
+   boolean isTableDefined(String name) {
+      return tableNames.contains(name.toUpperCase(java.util.Locale.ROOT));
+   }
+
+   /**
+    * @return whether a VAR in scope declares the given name
+    */
+   boolean isVariableInScope(String name) {
+      String key = name.toUpperCase(java.util.Locale.ROOT);
+      for (java.util.Set<String> scope : variableScopes) {
+         if (scope.contains(key)) {
+            return true;
+         }
+      }
+      return false;
+   }
+
    /**
     * Strips the surrounding double quotes from a DAX
     * {@link #STRING_LITERAL} token image and un-doubles embedded

@@ -17,19 +17,21 @@ import java.util.List;
 /**
  * A complete DAX query statement, following the DAX query grammar:
  *
- * [DEFINE (MEASURE expression)+] EVALUATE expression+
+ * [DEFINE definition (, definition)*] (EVALUATE expression)+
+ *
+ * The components are declared in source order: the {@code DEFINE} clause
+ * comes before the {@code EVALUATE} statements.
  */
 public interface DaxStatement {
+
+    /**
+     * @return the definitions of the {@code DEFINE} clause, in order; empty
+     *         when the statement has no {@code DEFINE} clause
+     */
+    List<DefineClause> defineClauses();
 
     /**
      * @return the EVALUATE statements of the query
      */
     List<EvaluateStatement> evaluateStatements();
-
-    /**
-     * @return the {@code MEASURE} definitions of the {@code DEFINE} clause,
-     *         in order; empty when the statement has no {@code DEFINE}
-     *         clause
-     */
-    List<DefineClause> defineClauses();
 }

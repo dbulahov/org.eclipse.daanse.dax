@@ -13,15 +13,15 @@
 package org.eclipse.daanse.dax.model.api.expression;
 
 /**
- * A bare unquoted word standing alone as a value, e.g. the {@code DESC} in
- * {@code TOPN(10, 'Sales', 'Sales'[Amount], DESC)}. A bare word naming a
- * variable in scope is a {@link VariableReference} instead, one naming a
- * {@code DEFINE TABLE} a {@link TableReference}.
+ * A reference to a variable declared by a {@code VAR} in scope, e.g. the
+ * {@code x} in {@code VAR x = 1 RETURN ROW("Value", x)}. The variable may be
+ * declared by an enclosing {@link VarExpression} or by a {@code DEFINE VAR}
+ * clause.
  */
-public non-sealed interface Keyword extends DaxExpression {
+public non-sealed interface VariableReference extends DaxExpression {
 
     /**
-     * @return the keyword text, e.g. {@code DESC}
+     * @return the variable name as written at the reference
      */
     String name();
 }

@@ -83,7 +83,7 @@ class SimpleUnparserTest {
                 new IdentifierR(List.of(new EntityR("Sales"), new ScalarR("Total"))), sumFunc);
         EvaluateStatement evaluateStatement = new EvaluateStatementR(
                 new IdentifierR(List.of(new EntityR("Sales"))));
-        DaxStatement defStmt = new DaxStatementR(List.of(evaluateStatement), List.of(measureClause));
+        DaxStatement defStmt = new DaxStatementR(List.of(measureClause), List.of(evaluateStatement));
 
         String result = unparser.unparseDaxStatement(defStmt);
 
@@ -96,10 +96,9 @@ class SimpleUnparserTest {
     @Test
     void testSeveralEvaluateStatements() {
         // CREATE: EVALUATE 'Sales' EVALUATE 'Product'
-        DaxStatement stmt = new DaxStatementR(
+        DaxStatement stmt = new DaxStatementR(List.of(),
                 List.of(new EvaluateStatementR(new IdentifierR(List.of(new EntityR("Sales")))),
-                        new EvaluateStatementR(new IdentifierR(List.of(new EntityR("Product"))))),
-                List.of());
+                        new EvaluateStatementR(new IdentifierR(List.of(new EntityR("Product"))))));
 
         String result = unparser.unparseDaxStatement(stmt);
 
@@ -153,7 +152,7 @@ class SimpleUnparserTest {
         OrderByItem orderItem = new OrderByItemR(new IdentifierR(List.of(new ScalarR("Amount"))),
                 OrderByItem.SortDirection.DESC);
         List<OrderByItem> orderBy = List.of(orderItem);
-        DaxStatement stmt = new DaxStatementR(List.of(new EvaluateStatementR(tableRef, orderBy)), List.of());
+        DaxStatement stmt = new DaxStatementR(List.of(), List.of(new EvaluateStatementR(tableRef, orderBy)));
 
         String result = unparser.unparseDaxStatement(stmt);
 

@@ -18,12 +18,12 @@ INJECT DaxStatement :
    import java.util.List;
    implements org.eclipse.daanse.dax.model.api.DaxStatement
 {
-   public List<org.eclipse.daanse.dax.model.api.EvaluateStatement> evaluateStatements() {
-      return childrenOfType(org.eclipse.daanse.dax.model.api.EvaluateStatement.class);
-   }
-
    public List<org.eclipse.daanse.dax.model.api.DefineClause> defineClauses() {
       return childrenOfType(org.eclipse.daanse.dax.model.api.DefineClause.class);
+   }
+
+   public List<org.eclipse.daanse.dax.model.api.EvaluateStatement> evaluateStatements() {
+      return childrenOfType(org.eclipse.daanse.dax.model.api.EvaluateStatement.class);
    }
 }
 
@@ -128,11 +128,14 @@ INJECT TableDefinition :
 // an existing one) followed by the table expression it is defined as, e.g.
 // TABLE TopProducts = TOPN(10, 'Product', ...). #TableDefinition forces a
 // definite node so it does not collapse to just its formula.
+// The name is declared only after the expression, as a table is not
+// visible in its own definition.
 TableDefinition#TableDefinition :
    < TABLE >
-   < IDENTIFIER >
+   < IDENTIFIER > {String tableName = lastConsumedToken.getImage();}
    < EQUAL >
    Expression
+   {declareTable(tableName);}
 ;
 
 INJECT VariableDefinition :
@@ -151,11 +154,14 @@ INJECT VariableDefinition :
 // name followed by the expression it is defined as), just under the VAR
 // keyword instead of TABLE, e.g. VAR __minAmount = 1000. #VariableDefinition
 // forces a definite node for the same reason as #TableDefinition above.
+// The name is declared in the current variable scope only after the
+// expression, as a variable is not visible in its own definition.
 VariableDefinition#VariableDefinition :
    < VAR >
-   < IDENTIFIER >
+   < IDENTIFIER > {String variableName = lastConsumedToken.getImage();}
    < EQUAL >
    Expression
+   {declareVariable(variableName);}
 ;
 
 INJECT ParameterDefinition :
