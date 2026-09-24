@@ -36,7 +36,7 @@
     <revision>0.0.1-SNAPSHOT</revision>
     <scm.repo.detail>org.eclipse.daanse.dax</scm.repo.detail>
     <!-- Override parent-managed 4.9.0/1.17.5: those cannot read the
-         Java 25 class files of org.eclipse.daanse.olap.api. -->
+        Java 25 class files of org.eclipse.daanse.olap.api. -->
     <mockito.version>5.14.1</mockito.version>
     <bytebuddy.version>1.18.3</bytebuddy.version>
   </properties>
@@ -60,6 +60,8 @@
     <module>model.record</module>
     <module>parser.api</module>
     <module>parser.ccc</module>
+    <module>unparser.api</module>
+    <module>unparser.simple</module>
   </modules>
 
   <dependencies>

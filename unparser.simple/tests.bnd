@@ -1,0 +1,28 @@
+# *******************************************************************************
+# Copyright (c) 2026 Contributors to the Eclipse Foundation.
+#
+# This program and the accompanying materials are made
+# available under the terms of the Eclipse Public License 2.0
+# which is available at https://www.eclipse.org/legal/epl-2.0/
+#
+# SPDX-License-Identifier: EPL-2.0
+#
+#   Contributors:
+#    Stefan Bischof (bipolis.org) - initial
+# *******************************************************************************
+#
+# Instructions for the test fragment (bnd-maven-plugin, test-jar goal).
+# Same content as the inherited defaults of the parent pom, plus:
+#
+# The round-trip test (RoundTripTest) drives the CCC parser. That parser lives
+# in a package that the parser.ccc bundle does not export, so the reference must
+# not become an Import-Package of this fragment - it would be unresolvable.
+# RoundTripTest is a plain surefire test and is never loaded inside the OSGi
+# framework (only classes in *.integration.* are Test-Cases), therefore dropping
+# the parser packages from the fragment imports is safe.
+
+Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.annotation.Testable;CONCRETE;NAMED;*.integration.*}
+Import-Package: !org.eclipse.daanse.dax.parser.*,*
+-fixupmessages: *for this fragment/require bundle cannot be found on the classpath
+-noextraheaders: true
+-noimportjava: true
