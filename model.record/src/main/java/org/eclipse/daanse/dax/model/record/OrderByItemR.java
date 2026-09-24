@@ -50,4 +50,8 @@ public record OrderByItemR(DaxExpression expression, SortDirection direction, Op
     public OrderByItemR(DaxExpression expression, SortDirection direction) {
         this(expression, direction, Optional.empty());
     }
+
+    public OrderByItemR(DaxExpression expression) {
+        this(expression, SortDirection.ASC, Optional.empty());
+    }
 }
