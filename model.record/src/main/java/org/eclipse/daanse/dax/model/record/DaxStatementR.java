@@ -22,20 +22,20 @@ import org.eclipse.daanse.dax.model.api.EvaluateStatement;
 /**
  * Record implementation of {@link DaxStatement}.
  *
+ * @param defineClauses
+ *            the definitions of the DEFINE clause, in source order
  * @param evaluateStatements
  *            the EVALUATE statements of the query, in source order; never
  *            empty
- * @param defineClauses
- *            the definitions of the DEFINE clause, in source order
  */
-public record DaxStatementR(List<EvaluateStatement> evaluateStatements, List<DefineClause> defineClauses)
+public record DaxStatementR(List<DefineClause> defineClauses, List<EvaluateStatement> evaluateStatements)
         implements DaxStatement {
 
     public DaxStatementR {
-        Objects.requireNonNull(evaluateStatements, "evaluateStatements must not be null");
         Objects.requireNonNull(defineClauses, "defineClauses must not be null");
-        evaluateStatements = List.copyOf(evaluateStatements);
+        Objects.requireNonNull(evaluateStatements, "evaluateStatements must not be null");
         defineClauses = List.copyOf(defineClauses);
+        evaluateStatements = List.copyOf(evaluateStatements);
     }
 
     /**
@@ -46,6 +46,6 @@ public record DaxStatementR(List<EvaluateStatement> evaluateStatements, List<Def
      *            the EVALUATE statements of the query, in source order
      */
     public DaxStatementR(List<EvaluateStatement> evaluateStatements) {
-        this(evaluateStatements, List.of());
+        this(List.of(), evaluateStatements);
     }
 }

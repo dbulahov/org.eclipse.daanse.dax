@@ -45,6 +45,9 @@ import org.eclipse.daanse.dax.model.api.expression.Scalar;
 import org.eclipse.daanse.dax.model.api.expression.StringExpression;
 import org.eclipse.daanse.dax.model.api.expression.StringLiteral;
 import org.eclipse.daanse.dax.model.api.expression.TableConstructor;
+import org.eclipse.daanse.dax.model.api.expression.TableReference;
+import org.eclipse.daanse.dax.model.api.expression.VarExpression;
+import org.eclipse.daanse.dax.model.api.expression.VariableReference;
 import org.eclipse.daanse.dax.unparser.api.UnParser;
 
 /**
@@ -94,6 +97,8 @@ public abstract class AbstractUnParser implements UnParser {
     // Binding strength of the expression levels, mirroring the grammar of the
     // parser (Expressions.inc.ccc): a higher value binds tighter. Note that
     // && and || share one level there, and comparisons are non-associative.
+    // A VAR block is a whole Expression and binds weakest of all.
+    private static final int PREC_VAR = 0;
     private static final int PREC_LOGICAL = 1;
     private static final int PREC_COMPARISON = 2;
     private static final int PREC_STRING = 3;
@@ -277,6 +282,9 @@ public abstract class AbstractUnParser implements UnParser {
         case Scalar scalar -> appendScalar(sb, scalar);
         case Parameter parameter -> sb.append('@').append(parameter.name());
         case Keyword keyword -> sb.append(keyword.name());
+        case VarExpression var -> appendVarExpression(sb, var, context);
+        case VariableReference variable -> sb.append(variable.name());
+        case TableReference table -> sb.append(table.name());
         case ArithmeticExpression arithmetic -> appendBinary(sb, arithmetic.left(),
                 arithmeticOperator(arithmetic.operator()), arithmetic.right(), precedence(arithmetic), false);
         case StringExpression string -> appendBinary(sb, string.left(), "&", string.right(), PREC_STRING, false);
@@ -317,6 +325,7 @@ public abstract class AbstractUnParser implements UnParser {
 
     protected static int precedence(DaxExpression expression) {
         return switch (expression) {
+        case VarExpression e -> PREC_VAR;
         case LogicalExpression e -> PREC_LOGICAL;
         case BooleanExpression e -> PREC_COMPARISON;
         case StringExpression e -> PREC_STRING;
@@ -349,6 +358,20 @@ public abstract class AbstractUnParser implements UnParser {
         case GREATER_THAN_OR_EQUAL -> ">=";
         case IN -> "IN";
         };
+    }
+
+    /**
+     * Renders a {@code VAR} block, one declaration per line followed by the
+     * {@code RETURN} line.
+     */
+    protected void appendVarExpression(StringBuilder sb, VarExpression var, String context) {
+        for (VariableDefinition variable : var.variables()) {
+            sb.append("VAR ").append(variable.name()).append(" = ");
+            appendExpression(sb, variable.expression(), "variable expression");
+            sb.append('\n');
+        }
+        sb.append("RETURN ");
+        appendExpression(sb, var.returnExpression(), "return expression");
     }
 
     protected void appendLiteral(StringBuilder sb, Literal literal, String context) {

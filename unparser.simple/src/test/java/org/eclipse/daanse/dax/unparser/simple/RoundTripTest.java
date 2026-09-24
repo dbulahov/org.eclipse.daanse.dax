@@ -103,10 +103,14 @@ class RoundTripTest {
             "EVALUATE FILTER('Sales', 'Sales'[Amount] > @MinAmount)", //
             "DEFINE @MinAmount = 1000 EVALUATE FILTER('Sales', 'Sales'[Amount] > @MinAmount)", //
             "DEFINE TABLE Top = TOPN(10, 'Product', 'Product'[Price], DESC) EVALUATE Top", //
+            "DEFINE TABLE T = {1, 2}, TABLE U = FILTER(T, true) EVALUATE CALCULATETABLE(U, T)", //
             "DEFINE COLUMN 'Sales'[Category] = IF('Sales'[Amount] > 100, \"High\", \"Low\") EVALUATE 'Sales'", //
             "EVALUATE 'Product' ORDER BY 'Product'[ProductKey] START AT 50", //
             "EVALUATE 'Product' ORDER BY 'Product'[ProductKey] START AT ((1 + 2) * 3)", //
-            "EVALUATE 'A' EVALUATE 'B' ORDER BY 'B'[X] DESC" //
+            "EVALUATE 'A' EVALUATE 'B' ORDER BY 'B'[X] DESC", //
+            "EVALUATE VAR x = 1 RETURN ROW(\"Value\", x)", //
+            "EVALUATE VAR x = 1 VAR y = x * 2 RETURN ROW(\"Value\", (VAR z = y RETURN z) + 1)", //
+            "DEFINE MEASURE 'Sales'[M] = VAR t = SUM('Sales'[Amount]) RETURN t * 2 EVALUATE 'Sales'" //
     })
     void testRoundTrip(String dax) throws Exception {
         String first = unparser.unparseDaxStatement(parse(dax));
