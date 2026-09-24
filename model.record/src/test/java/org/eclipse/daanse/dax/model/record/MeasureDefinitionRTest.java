@@ -91,4 +91,19 @@ class MeasureDefinitionRTest {
 
         assertThat(a).isNotEqualTo(b);
     }
+
+    @Test
+    void convenienceConstructorBuildsTheEntityAndScalarIdentifier() {
+        MeasureDefinitionR measure = new MeasureDefinitionR("Sales", "Total Amount", sumOfAmount());
+
+        assertThat(measure.name().parts()).containsExactly(new EntityR("Sales"), new ScalarR("Total Amount"));
+        assertThat(measure).isEqualTo(new MeasureDefinitionR(totalAmount(), sumOfAmount()));
+    }
+
+    @Test
+    void convenienceConstructorRejectsNullParts() {
+        assertThatNullPointerException().isThrownBy(() -> new MeasureDefinitionR(null, "Total Amount", sumOfAmount()));
+        assertThatNullPointerException().isThrownBy(() -> new MeasureDefinitionR("Sales", null, sumOfAmount()));
+        assertThatNullPointerException().isThrownBy(() -> new MeasureDefinitionR("Sales", "Total Amount", null));
+    }
 }

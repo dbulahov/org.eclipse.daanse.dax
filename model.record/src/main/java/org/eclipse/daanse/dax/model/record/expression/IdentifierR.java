@@ -30,4 +30,29 @@ public record IdentifierR(List<DaxExpression> parts) implements Identifier {
         Objects.requireNonNull(parts, "parts must not be null");
         parts = List.copyOf(parts);
     }
+
+    /**
+     * @param table the table name, without quotes
+     * @return the table reference {@code 'table'}
+     */
+    public static IdentifierR ofTable(String table) {
+        return new IdentifierR(List.of(new EntityR(table)));
+    }
+
+    /**
+     * @param table  the table name, without quotes
+     * @param column the column name, without brackets
+     * @return the fully qualified column reference {@code 'table'[column]}
+     */
+    public static IdentifierR ofColumn(String table, String column) {
+        return new IdentifierR(List.of(new EntityR(table), new ScalarR(column)));
+    }
+
+    /**
+     * @param measure the measure (or column) name, without brackets
+     * @return the unqualified reference {@code [measure]}
+     */
+    public static IdentifierR ofMeasure(String measure) {
+        return new IdentifierR(List.of(new ScalarR(measure)));
+    }
 }

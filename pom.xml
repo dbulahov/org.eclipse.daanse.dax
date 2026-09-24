@@ -62,6 +62,7 @@
     <module>parser.ccc</module>
     <module>unparser.api</module>
     <module>unparser.simple</module>
+    <module>unparser.formatted</module>
   </modules>
 
   <dependencies>

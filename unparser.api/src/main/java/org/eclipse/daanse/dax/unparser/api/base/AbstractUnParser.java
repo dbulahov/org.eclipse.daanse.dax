@@ -107,6 +107,23 @@ public abstract class AbstractUnParser implements UnParser {
     private static final int PREC_POWER = 6;
     private static final int PREC_PRIMARY = 7;
 
+    // Rendering contexts of expressions that stand alone at the end of a
+    // clause, i.e. are not nested inside another expression or followed by
+    // further tokens of their clause. Decorating subclasses may add a trailing
+    // line comment after these only.
+    /** Context of the expression of a {@code MEASURE} definition. */
+    protected static final String CONTEXT_MEASURE = "measure expression";
+    /** Context of the expression of a {@code COLUMN} definition. */
+    protected static final String CONTEXT_COLUMN = "column expression";
+    /** Context of the expression of a {@code TABLE} definition. */
+    protected static final String CONTEXT_TABLE = "table expression";
+    /** Context of the expression of a {@code DEFINE VAR} definition. */
+    protected static final String CONTEXT_VARIABLE = "variable expression";
+    /** Context of the expression of a parameter definition. */
+    protected static final String CONTEXT_PARAMETER = "parameter expression";
+    /** Context of the table expression of an {@code EVALUATE} statement. */
+    protected static final String CONTEXT_EVALUATE = "evaluate expression";
+
     @Override
     public final String unparseDaxStatement(DaxStatement daxStatement) {
         StringBuilder sb = new StringBuilder();
@@ -140,9 +157,9 @@ public abstract class AbstractUnParser implements UnParser {
     }
 
     /**
-     * Called before each clause of the {@code DEFINE} block, after the
-     * separating comma of the previous clause. Starts a new, indented line by
-     * default.
+     * Called before each clause of the {@code DEFINE} block. Starts a new,
+     * indented line by default, which also separates the clause from the
+     * previous one.
      *
      * @param sb     the output
      * @param clause the clause about to be rendered
@@ -158,6 +175,27 @@ public abstract class AbstractUnParser implements UnParser {
      * @param evaluate the statement about to be rendered
      */
     protected void beforeEvaluateStatement(StringBuilder sb, EvaluateStatement evaluate) {
+    }
+
+    /**
+     * Called before the {@code ORDER BY} keyword, right after the table
+     * expression. Appends a single space by default.
+     *
+     * @param sb the output
+     */
+    protected void beforeOrderByClause(StringBuilder sb) {
+        sb.append(' ');
+    }
+
+    /**
+     * Called before the {@code START AT} keyword, right after the last
+     * {@code ORDER BY} item. Appends a single space by default.
+     *
+     * @param sb     the output
+     * @param values the start values, one per {@code ORDER BY} item
+     */
+    protected void beforeStartAtClause(StringBuilder sb, List<DaxExpression> values) {
+        sb.append(' ');
     }
 
     /**
@@ -181,14 +219,10 @@ public abstract class AbstractUnParser implements UnParser {
 
     protected void unparseDefineBlock(StringBuilder sb, List<DefineClause> defineClauses) {
         sb.append("DEFINE");
-        boolean first = true;
+        // DAX separates the definitions by whitespace only, not by commas
         for (DefineClause clause : defineClauses) {
-            if (!first) {
-                sb.append(',');
-            }
             beforeDefineClause(sb, clause);
             appendDefineClause(sb, clause);
-            first = false;
         }
     }
 
@@ -198,25 +232,25 @@ public abstract class AbstractUnParser implements UnParser {
             sb.append("MEASURE ");
             appendIdentifier(sb, measure.name(), "measure name");
             sb.append(" = ");
-            appendExpression(sb, measure.expression(), "measure expression");
+            appendExpression(sb, measure.expression(), CONTEXT_MEASURE);
         }
         case ColumnDefinition column -> {
             sb.append("COLUMN ");
             appendIdentifier(sb, column.name(), "column name");
             sb.append(" = ");
-            appendExpression(sb, column.expression(), "column expression");
+            appendExpression(sb, column.expression(), CONTEXT_COLUMN);
         }
         case TableDefinition table -> {
             sb.append("TABLE ").append(table.name()).append(" = ");
-            appendExpression(sb, table.expression(), "table expression");
+            appendExpression(sb, table.expression(), CONTEXT_TABLE);
         }
         case VariableDefinition variable -> {
             sb.append("VAR ").append(variable.name()).append(" = ");
-            appendExpression(sb, variable.expression(), "variable expression");
+            appendExpression(sb, variable.expression(), CONTEXT_VARIABLE);
         }
         case ParameterDefinition parameter -> {
             sb.append('@').append(parameter.name()).append(" = ");
-            appendExpression(sb, parameter.expression(), "parameter expression");
+            appendExpression(sb, parameter.expression(), CONTEXT_PARAMETER);
         }
         }
     }
@@ -224,12 +258,22 @@ public abstract class AbstractUnParser implements UnParser {
     protected void unparseEvaluateStatement(StringBuilder sb, EvaluateStatement evaluate) {
         beforeEvaluateStatement(sb, evaluate);
         sb.append("EVALUATE ");
-        appendExpression(sb, evaluate.tableExpression(), "evaluate expression");
+        appendExpression(sb, evaluate.tableExpression(), CONTEXT_EVALUATE);
+        appendOrderBy(sb, evaluate);
+    }
+
+    /**
+     * Renders the optional {@code ORDER BY} clause of an {@code EVALUATE}
+     * statement, including its {@code START AT} values; renders nothing when
+     * the statement has no {@code ORDER BY}.
+     */
+    protected void appendOrderBy(StringBuilder sb, EvaluateStatement evaluate) {
         List<OrderByItem> orderBy = evaluate.orderBy();
         if (orderBy.isEmpty()) {
             return;
         }
-        sb.append(" ORDER BY ");
+        beforeOrderByClause(sb);
+        sb.append("ORDER BY ");
         List<DaxExpression> startAtValues = new ArrayList<>();
         for (int i = 0; i < orderBy.size(); i++) {
             if (i > 0) {
@@ -252,7 +296,8 @@ public abstract class AbstractUnParser implements UnParser {
      * the list form.
      */
     protected void appendStartAt(StringBuilder sb, List<DaxExpression> values) {
-        sb.append(" START AT ");
+        beforeStartAtClause(sb, values);
+        sb.append("START AT ");
         StringBuilder rendered = new StringBuilder();
         appendExpressionList(rendered, values, "start at value");
         if (values.size() == 1 && rendered.charAt(0) != '(') {
@@ -367,7 +412,7 @@ public abstract class AbstractUnParser implements UnParser {
     protected void appendVarExpression(StringBuilder sb, VarExpression var, String context) {
         for (VariableDefinition variable : var.variables()) {
             sb.append("VAR ").append(variable.name()).append(" = ");
-            appendExpression(sb, variable.expression(), "variable expression");
+            appendExpression(sb, variable.expression(), "local variable expression");
             sb.append('\n');
         }
         sb.append("RETURN ");
