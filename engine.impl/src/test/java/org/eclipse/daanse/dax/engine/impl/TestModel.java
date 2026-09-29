@@ -20,17 +20,22 @@ import org.eclipse.daanse.dax.engine.impl.model.ModelMeasure;
 import org.eclipse.daanse.dax.engine.impl.model.ModelTable;
 import org.eclipse.daanse.dax.engine.impl.model.TabularModel;
 
-/** A small tabular model: Product (one hierarchy of two levels), Date, Store (two hierarchies). */
+/**
+ * A small tabular model: Product (one hierarchy of two levels), Date, Store (two hierarchies), Markets.
+ */
 public final class TestModel {
 
     public static final ModelColumn CATEGORY = column("Product", "Category", "[Product]", "[Product].[Category]", 1);
     public static final ModelColumn SUBCATEGORY = column("Product", "Subcategory", "[Product]",
             "[Product].[Subcategory]", 2);
+    public static final ModelColumn MARKETS = column("Markets", "Country", "[Markets]",
+            "[Markets].[Country]", 1);
     public static final ModelColumn YEAR = column("Date", "Year", "[Date]", "[Date].[Year]", 1);
     public static final ModelColumn CITY = column("Store", "City", "[Store]", "[Store].[City]", 1);
     public static final ModelColumn STORE_TYPE = column("Store", "Type", "[Store Type]", "[Store Type].[Type]", 1);
     public static final ModelMeasure SALES_AMOUNT = new ModelMeasure("Sales Amount", "[Measures].[Sales Amount]");
     public static final ModelMeasure UNIT_SALES = new ModelMeasure("Unit Sales", "[Measures].[Unit Sales]");
+    public static final ModelMeasure SALES = new ModelMeasure("Sales", "[Measures].[Sales]");
 
     private TestModel() {
     }
@@ -38,8 +43,8 @@ public final class TestModel {
     public static TabularModel model() {
         return new TabularModel("[Sales]",
                 List.of(new ModelTable("Product", List.of(CATEGORY, SUBCATEGORY)), new ModelTable("Date", List.of(YEAR)),
-                        new ModelTable("Store", List.of(CITY, STORE_TYPE))),
-                List.of(SALES_AMOUNT, UNIT_SALES));
+                        new ModelTable("Store", List.of(CITY, STORE_TYPE)), new ModelTable("Markets", List.of(MARKETS))),
+                List.of(SALES_AMOUNT, UNIT_SALES, SALES));
     }
 
     private static ModelColumn column(String table, String name, String hierarchy, String level, int depth) {

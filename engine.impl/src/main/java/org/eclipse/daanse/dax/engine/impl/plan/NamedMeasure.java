@@ -17,15 +17,23 @@ import java.util.Objects;
 import org.eclipse.daanse.dax.engine.impl.model.ModelMeasure;
 
 /**
- * A measure as a result column.
+ * A measure, or an expression the cube computes of measures, as a result
+ * column.
  *
- * @param name    the column name the query gives, without brackets
- * @param measure the measure
+ * @param name       the column name the query gives, without brackets
+ * @param expression a {@link ScalarPlan.MeasureValue}, or an expression of
+ *                   measures and constants as {@link Summarize#condition()}
+ *                   has
  */
-public record NamedMeasure(String name, ModelMeasure measure) {
+public record NamedMeasure(String name, ScalarPlan expression) {
 
     public NamedMeasure {
         Objects.requireNonNull(name, "name");
-        Objects.requireNonNull(measure, "measure");
+        Objects.requireNonNull(expression, "expression");
+    }
+
+    /** A measure of the model as a result column. */
+    public NamedMeasure(String name, ModelMeasure measure) {
+        this(name, new ScalarPlan.MeasureValue(measure));
     }
 }

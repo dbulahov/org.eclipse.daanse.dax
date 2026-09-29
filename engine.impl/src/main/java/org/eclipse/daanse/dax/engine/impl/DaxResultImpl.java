@@ -20,10 +20,15 @@ import org.eclipse.daanse.dax.engine.api.DaxException;
 import org.eclipse.daanse.dax.engine.api.DaxResult;
 import org.eclipse.daanse.dax.engine.api.DaxTable;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxGenerator;
+import org.eclipse.daanse.dax.engine.impl.plan.AddColumns;
 import org.eclipse.daanse.dax.engine.impl.plan.ConstantTable;
+import org.eclipse.daanse.dax.engine.impl.plan.DaxValues;
 import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan;
 import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan.SortKey;
+import org.eclipse.daanse.dax.engine.impl.plan.Filter;
 import org.eclipse.daanse.dax.engine.impl.plan.Summarize;
+import org.eclipse.daanse.dax.engine.impl.plan.TablePlan;
+import org.eclipse.daanse.dax.engine.impl.plan.TopN;
 
 /**
  * Computes the table of an {@code EVALUATE} when it is asked for, one after
@@ -59,10 +64,7 @@ final class DaxResultImpl implements DaxResult {
         }
         control.check();
         EvaluatePlan plan = plans.get(next);
-        List<List<Object>> rows = switch (plan.table()) {
-        case ConstantTable constant -> constant.rows();
-        case Summarize summarize -> runner.run(MdxGenerator.summarize(cube, summarize));
-        };
+        List<List<Object>> rows = rows(plan.table());
         next++;
         current = new DaxTableImpl(plan.table().columns(), sorted(rows, plan.orderBy()), control);
         return current;
@@ -82,6 +84,16 @@ final class DaxResultImpl implements DaxResult {
             current.invalidate();
             current = null;
         }
+    }
+
+    private List<List<Object>> rows(TablePlan table) throws DaxException {
+        return switch (table) {
+        case ConstantTable constant -> constant.rows();
+        case Summarize summarize -> runner.run(MdxGenerator.summarize(cube, summarize));
+        case Filter filter -> filter.apply(rows(filter.source()));
+        case TopN topN -> topN.apply(rows(topN.source()));
+        case AddColumns addColumns -> addColumns.apply(rows(addColumns.source()));
+        };
     }
 
     private static List<List<Object>> sorted(List<List<Object>> rows, List<SortKey> keys) {

@@ -10,7 +10,7 @@
  * Contributors:
  *   dbulahov - initial
  */
-package org.eclipse.daanse.dax.engine.impl;
+package org.eclipse.daanse.dax.engine.impl.plan;
 
 import java.math.BigDecimal;
 
@@ -18,13 +18,13 @@ import java.math.BigDecimal;
  * Compares DAX values as {@code ORDER BY} does: BLANK first, numbers by value,
  * text ignoring case.
  */
-final class DaxValues {
+public final class DaxValues {
 
     private DaxValues() {
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    static int compare(Object a, Object b) {
+    public static int compare(Object a, Object b) {
         if (a == null || b == null) {
             return a == null ? (b == null ? 0 : -1) : 1;
         }
