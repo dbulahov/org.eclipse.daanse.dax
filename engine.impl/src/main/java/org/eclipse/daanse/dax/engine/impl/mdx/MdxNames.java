@@ -24,4 +24,20 @@ public final class MdxNames {
     public static String quote(String name) {
         return "[" + name.replace("]", "]]") + "]";
     }
+
+    /**
+     * @return the dotted unique name as MDX writes it, e.g.
+     *         {@code Product.Product.Category} as
+     *         {@code [Product].[Product].[Category]}
+     */
+    public static String uniqueName(String dotted) {
+        StringBuilder name = new StringBuilder();
+        for (String part : dotted.split("\\.", -1)) {
+            if (!name.isEmpty()) {
+                name.append('.');
+            }
+            name.append(quote(part));
+        }
+        return name.toString();
+    }
 }

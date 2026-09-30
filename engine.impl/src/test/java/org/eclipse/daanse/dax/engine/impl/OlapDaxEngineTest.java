@@ -63,8 +63,8 @@ class OlapDaxEngineTest {
     private final CatalogReader reader = mock(CatalogReader.class);
     private final Cube cube = mock(Cube.class);
     private final Statement olapStatement = mock(Statement.class);
-    private final Level category = level("Category", "[Product].[Category]", 1);
-    private final Level subcategory = level("Subcategory", "[Product].[Subcategory]", 2);
+    private final Level category = level("Category", "[Product].[ProductHierarchy].[Category]", 1);
+    private final Level subcategory = level("Subcategory", "[Product].[ProductHierarchy].[Subcategory]", 2);
 
     @BeforeEach
     void catalog() {
@@ -75,7 +75,7 @@ class OlapDaxEngineTest {
         Dimension product = dimension("Product", false);
         Dimension measures = dimension("Measures", true);
         when(reader.getCubeDimensions(cube)).thenReturn(List.of(measures, product));
-        Hierarchy hierarchy = hierarchy("Product", "[Product]");
+        Hierarchy hierarchy = hierarchy("ProductHierarchy", "[Product].[ProductHierarchy]");
         when(reader.getDimensionHierarchies(product)).thenReturn(List.of(hierarchy));
         when(reader.getHierarchyLevels(hierarchy)).thenReturn(List.of(category, subcategory));
         Member salesAmount = measure("Sales Amount");
@@ -107,18 +107,18 @@ class OlapDaxEngineTest {
                 List.of(member("Mountain", subcategory, bikes)), List.of(member("Caps", subcategory, clothes)));
         CellSet cellSet = cellSet(positions, new Object[][] { { 10.0 }, { 30 }, { 20.5 } });
         when(olapStatement.executeQuery(
-                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[Subcategory].Members ON ROWS FROM [Sales]"))
+                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[ProductHierarchy].[Subcategory].Members ON ROWS FROM [Sales]"))
                 .thenReturn(cellSet);
 
         try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
                 DaxResult result = statement.execute("""
-                        EVALUATE SUMMARIZECOLUMNS('Product'[Category], 'Product'[Subcategory], "Sales", [Sales Amount])
+                        EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Category], 'Product'[Product.ProductHierarchy.Subcategory], "Sales", [Sales Amount])
                         ORDER BY [Sales] DESC
                         EVALUATE {1}
                         """)) {
             DaxTable first = result.nextTable();
             assertThat(first.columns()).extracting(DaxColumn::name)
-                    .containsExactly("Product[Category]", "Product[Subcategory]", "[Sales]");
+                    .containsExactly("Product[Product.ProductHierarchy.Category]", "Product[Product.ProductHierarchy.Subcategory]", "[Sales]");
             assertThat(rows(first)).containsExactly(List.of("Bikes", "Mountain", 30L), List.of("Clothes", "Caps", 20.5),
                     List.of("Bikes", "Road", 10.0));
 
@@ -138,13 +138,13 @@ class OlapDaxEngineTest {
         List<List<Member>> positions = List.of(List.of(bikes), List.of(clothes));
         CellSet cellSet = cellSet(positions, new Object[][] { { 40.0 }, { 20.5 } });
         when(olapStatement.executeQuery(
-                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[Category].Members ON ROWS FROM [Sales]"))
+                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[ProductHierarchy].[Category].Members ON ROWS FROM [Sales]"))
                 .thenReturn(cellSet);
 
         DaxQueryStatement statement = engine.createStatement(connection, Map.of());
         statement.setParameter("least", 30L);
         try (statement; DaxResult result = statement.execute("""
-                        EVALUATE FILTER(SUMMARIZECOLUMNS('Product'[Category], "Sales", [Sales Amount]),
+                        EVALUATE FILTER(SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Category], "Sales", [Sales Amount]),
                             [Sales] > @least)
                         """)) {
             assertThat(rows(result.nextTable())).containsExactly(List.of("Bikes", 40.0));
@@ -154,10 +154,10 @@ class OlapDaxEngineTest {
     @Test
     void topNByMeasureRunsTopCount() throws Exception {
         CellSet cellSet = cellSet(List.of(List.of(member("Bikes", category, null))), new Object[0][0]);
-        when(olapStatement.executeQuery("SELECT {} ON COLUMNS, TopCount(NonEmpty([Product].[Category].Members, "
+        when(olapStatement.executeQuery("SELECT {} ON COLUMNS, TopCount(NonEmpty([Product].[ProductHierarchy].[Category].Members, "
                 + "{[Measures].[Sales Amount]}), 1, [Measures].[Sales Amount]) ON ROWS FROM [Sales]")).thenReturn(cellSet);
         try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
-                DaxResult result = statement.execute("EVALUATE TOPN(1, VALUES('Product'[Category]), [Sales Amount])")) {
+                DaxResult result = statement.execute("EVALUATE TOPN(1, VALUES('Product'[Product.ProductHierarchy.Category]), [Sales Amount])")) {
             assertThat(rows(result.nextTable())).containsExactly(List.of("Bikes"));
         }
     }
@@ -167,11 +167,11 @@ class OlapDaxEngineTest {
         CellSet cellSet = cellSet(List.of(List.of(member("Bikes", category, null)),
                 List.of(member("Clothes", category, null))), new Object[][] { { true }, { false } });
         when(olapStatement.executeQuery("WITH MEMBER [Measures].[DAX Empty] AS IsEmpty([Measures].[Sales Amount]) "
-                + "SELECT {[Measures].[DAX Empty]} ON COLUMNS, NON EMPTY [Product].[Category].Members ON ROWS FROM [Sales]"))
+                + "SELECT {[Measures].[DAX Empty]} ON COLUMNS, NON EMPTY [Product].[ProductHierarchy].[Category].Members ON ROWS FROM [Sales]"))
                 .thenReturn(cellSet);
         try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
                 DaxResult result = statement.execute(
-                        "EVALUATE SUMMARIZECOLUMNS('Product'[Category], \"Empty\", ISBLANK([Sales Amount]))")) {
+                        "EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Category], \"Empty\", ISBLANK([Sales Amount]))")) {
             assertThat(rows(result.nextTable())).containsExactly(List.of("Bikes", true), List.of("Clothes", false));
         }
     }
@@ -181,12 +181,12 @@ class OlapDaxEngineTest {
         CellSet cellSet = cellSet(List.of(List.of(member("Road", subcategory, member("Bikes", category, null)))),
                 new Object[][] { { 10.0 } });
         when(olapStatement.executeQuery("SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY Exists("
-                + "[Product].[Subcategory].Members, Filter([Product].[Category].Members, "
-                + "UCase([Product].CurrentMember.Name) = \"BIKES\")) ON ROWS FROM [Sales]")).thenReturn(cellSet);
+                + "[Product].[ProductHierarchy].[Subcategory].Members, Filter([Product].[ProductHierarchy].[Category].Members, "
+                + "UCase([Product].[ProductHierarchy].CurrentMember.Name) = \"BIKES\")) ON ROWS FROM [Sales]")).thenReturn(cellSet);
         try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
                 DaxResult result = statement.execute("""
-                        EVALUATE SUMMARIZECOLUMNS('Product'[Subcategory],
-                            KEEPFILTERS(FILTER(VALUES('Product'[Category]), 'Product'[Category] = "bikes")),
+                        EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Subcategory],
+                            KEEPFILTERS(FILTER(VALUES('Product'[Product.ProductHierarchy.Category]), 'Product'[Product.ProductHierarchy.Category] = "bikes")),
                             "S", [Sales Amount])
                         """)) {
             assertThat(rows(result.nextTable())).containsExactly(List.of("Road", 10.0));
@@ -198,15 +198,15 @@ class OlapDaxEngineTest {
         CellSet cellSet = cellSet(List.of(List.of(member("Bikes", category, null)),
                 List.of(member("Clothes", category, null))), new Object[][] { { 40.0 }, { null } });
         when(olapStatement.executeQuery(
-                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, [Product].[Category].Members ON ROWS FROM [Sales]"))
+                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, [Product].[ProductHierarchy].[Category].Members ON ROWS FROM [Sales]"))
                 .thenReturn(cellSet);
         try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
                 DaxResult result = statement.execute("""
-                        EVALUATE ADDCOLUMNS(VALUES('Product'[Category]), "S", [Sales Amount],
-                            "Bikes", 'Product'[Category] = "bikes")
+                        EVALUATE ADDCOLUMNS(VALUES('Product'[Product.ProductHierarchy.Category]), "S", [Sales Amount],
+                            "Bikes", 'Product'[Product.ProductHierarchy.Category] = "bikes")
                         """)) {
             DaxTable table = result.nextTable();
-            assertThat(table.columns()).extracting(DaxColumn::name).containsExactly("Product[Category]", "[S]",
+            assertThat(table.columns()).extracting(DaxColumn::name).containsExactly("Product[Product.ProductHierarchy.Category]", "[S]",
                     "[Bikes]");
             assertThat(rows(table)).containsExactly(List.of("Bikes", 40.0, true),
                     java.util.Arrays.asList("Clothes", null, false));

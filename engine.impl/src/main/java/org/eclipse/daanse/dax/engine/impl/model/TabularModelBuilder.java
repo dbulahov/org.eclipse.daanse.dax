@@ -14,8 +14,6 @@ package org.eclipse.daanse.dax.engine.impl.model;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxNames;
@@ -30,9 +28,9 @@ import org.eclipse.daanse.olap.api.element.Member;
  * Builds the {@link TabularModel} of a cube, as a role sees it.
  * <p>
  * Every visible dimension but the measures becomes a table, every visible
- * level but the all level a column. A column is named after its level; if a
- * table has two levels of that name, the later one is named
- * {@code Level (Hierarchy)}. Column values are member names, so every column
+ * level but the all level a column. A column is named by its dimension,
+ * hierarchy and level, e.g. {@code Product.ProductHierarchy.Category}, as
+ * queries refer to it. Column values are member names, so every column
  * is of type {@link DaxType#STRING}.
  * </p>
  */
@@ -67,7 +65,6 @@ public final class TabularModelBuilder {
     private static ModelTable table(CatalogReader reader, Dimension dimension) {
         String table = dimension.getName();
         List<ModelColumn> columns = new ArrayList<>();
-        Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         for (Hierarchy hierarchy : reader.getDimensionHierarchies(dimension)) {
             if (!hierarchy.isVisible()) {
                 continue;
@@ -76,11 +73,8 @@ public final class TabularModelBuilder {
                 if (level.isAll() || !level.isVisible()) {
                     continue;
                 }
-                String name = level.getName();
-                if (!names.add(name)) {
-                    name = name + " (" + hierarchy.getName() + ")";
-                    names.add(name);
-                }
+                // named as queries refer to it: Dimension.Hierarchy.Level
+                String name = table + "." + hierarchy.getName() + "." + level.getName();
                 columns.add(new ModelColumn(table, name, hierarchy.getUniqueName(), level.getUniqueName(),
                         level.getDepth(), DaxType.STRING));
             }

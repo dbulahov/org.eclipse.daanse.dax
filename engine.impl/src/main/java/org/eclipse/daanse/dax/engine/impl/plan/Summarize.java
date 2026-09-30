@@ -39,8 +39,9 @@ import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOper
  * Filter tables, as of {@code SUMMARIZECOLUMNS}, filter the cube before
  * grouping: a filter on hierarchies grouped by keeps the groups related to its
  * rows, one on others restricts what the measures compute. Each is a
- * {@link Summarize} without measures and filter tables, or a {@link Filter} of
- * one by its columns.
+ * {@link Summarize} without measures and filter tables, a {@link Filter} of
+ * one by its columns, or a {@link Generate} of one and a grouping without
+ * measures.
  * </p>
  * <p>
  * Added measures, as of {@code ADDCOLUMNS}, are computed for each group after
@@ -125,6 +126,11 @@ public record Summarize(List<ModelColumn> groupBy, List<NamedMeasure> measures, 
         return switch (filter) {
         case Summarize summarize -> summarize.groupBy();
         case Filter f -> filterColumns(f.source());
+        case Generate generate -> {
+            List<ModelColumn> columns = new ArrayList<>(filterColumns(generate.outer()));
+            columns.addAll(generate.inner().groupBy());
+            yield columns;
+        }
         default -> throw new IllegalArgumentException("no filter table: " + filter);
         };
     }

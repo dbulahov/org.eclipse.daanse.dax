@@ -26,6 +26,7 @@ import org.eclipse.daanse.dax.engine.impl.plan.DaxValues;
 import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan;
 import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan.SortKey;
 import org.eclipse.daanse.dax.engine.impl.plan.Filter;
+import org.eclipse.daanse.dax.engine.impl.plan.Generate;
 import org.eclipse.daanse.dax.engine.impl.plan.Summarize;
 import org.eclipse.daanse.dax.engine.impl.plan.TablePlan;
 import org.eclipse.daanse.dax.engine.impl.plan.TopN;
@@ -90,6 +91,7 @@ final class DaxResultImpl implements DaxResult {
         return switch (table) {
         case ConstantTable constant -> constant.rows();
         case Summarize summarize -> runner.run(MdxGenerator.summarize(cube, summarize));
+        case Generate generate -> runner.run(MdxGenerator.generate(cube, generate));
         case Filter filter -> filter.apply(rows(filter.source()));
         case TopN topN -> topN.apply(rows(topN.source()));
         case AddColumns addColumns -> addColumns.apply(rows(addColumns.source()));

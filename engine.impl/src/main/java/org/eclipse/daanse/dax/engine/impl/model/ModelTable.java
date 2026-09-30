@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import org.eclipse.daanse.dax.engine.impl.mdx.MdxNames;
+
 /**
  * A table of the {@link TabularModel}: a dimension of the cube.
  *
@@ -30,8 +32,17 @@ public record ModelTable(String name, List<ModelColumn> columns) {
         columns = List.copyOf(columns);
     }
 
-    /** @return the column of that name, ignoring case as DAX does */
+    /**
+     * @param name the column name, or the unique name of its level written with
+     *             dots, e.g. {@code Product.Product.Category}
+     * @return the column of that name, ignoring case as DAX does
+     */
     public Optional<ModelColumn> column(String name) {
-        return columns.stream().filter(c -> c.name().equalsIgnoreCase(name)).findFirst();
+        Optional<ModelColumn> column = columns.stream().filter(c -> c.name().equalsIgnoreCase(name)).findFirst();
+        if (column.isPresent() || name.indexOf('.') < 0) {
+            return column;
+        }
+        String level = MdxNames.uniqueName(name);
+        return columns.stream().filter(c -> c.level().equalsIgnoreCase(level)).findFirst();
     }
 }

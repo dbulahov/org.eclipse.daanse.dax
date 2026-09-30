@@ -24,6 +24,7 @@ import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource;
 import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
 import org.eclipse.daanse.dax.engine.impl.plan.NamedMeasure;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan;
+import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.ColumnAggregate;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.ColumnValue;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Comparison;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Constant;
@@ -33,6 +34,7 @@ import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Logical;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.MeasureValue;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Not;
 import org.eclipse.daanse.dax.engine.impl.plan.Filter;
+import org.eclipse.daanse.dax.engine.impl.plan.Generate;
 import org.eclipse.daanse.dax.engine.impl.plan.Summarize;
 import org.eclipse.daanse.dax.engine.impl.plan.TablePlan;
 import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator;
@@ -48,7 +50,9 @@ import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOper
  * {@code BottomCount} of the groups where the measure is not empty. A result
  * expression other than a measure is a calculated member of {@code WITH},
  * e.g. {@code ISBLANK} of a measure is {@code IsEmpty} of it. Added measures
- * follow the measures on the columns axis; with them, {@code NonEmpty} of the
+ * follow the measures on the columns axis. An aggregation of a column is one
+ * of the members of its level {@code Existing} in the context: the counts
+ * count them, the others aggregate their names that are numbers; with them, {@code NonEmpty} of the
  * measures replaces {@code NON EMPTY}.
  * </p>
  * <p>
@@ -77,31 +81,10 @@ public final class MdxGenerator {
             sources.add(new ValueSource.MemberName(hierarchies.indexOf(column.hierarchy()), column.depth()));
         }
         StringBuilder mdx = new StringBuilder();
-        StringJoiner measures = new StringJoiner(", ", "{", "}");
-        // the members of the measures, not of the added ones, which keep no group
-        StringJoiner keeping = new StringJoiner(", ", "{", "}");
-        List<NamedMeasure> all = summarize.allMeasures();
-        for (int i = 0; i < all.size(); i++) {
-            NamedMeasure measure = all.get(i);
-            String member;
-            if (measure.expression() instanceof MeasureValue value) {
-                member = value.measure().uniqueName();
-            } else {
-                member = "[Measures]." + MdxNames.quote("DAX " + measure.name());
-                mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS ")
-                        .append(condition(measure.expression()));
-            }
-            measures.add(member);
-            if (i < summarize.measures().size()) {
-                keeping.add(member);
-            }
-            sources.add(new ValueSource.CellValue(i));
-        }
-        if (!mdx.isEmpty()) {
-            mdx.append(" ");
-        }
+        Measures measures = measures(summarize, mdx, sources);
+        String keeping = measures.keeping();
 
-        mdx.append("SELECT ").append(measures).append(" ON COLUMNS");
+        mdx.append("SELECT ").append(measures.all()).append(" ON COLUMNS");
         String slicer = null;
         List<TablePlan> kept = new ArrayList<>();
         for (TablePlan filter : summarize.filters()) {
@@ -134,6 +117,117 @@ public final class MdxGenerator {
         return new MdxQuery(mdx.toString(), sources, rows);
     }
 
+    /**
+     * @param all     the members of the columns axis: the measures, then the
+     *                added ones
+     * @param keeping the members of the measures, not of the added ones, which
+     *                keep no group
+     */
+    private record Measures(String all, String keeping) {
+    }
+
+    /**
+     * Appends the {@code WITH} clause of the measures that are no measure of
+     * the cube, with a space after it, and a cell source for each measure.
+     */
+    private static Measures measures(Summarize summarize, StringBuilder mdx, List<ValueSource> sources) {
+        StringJoiner measures = new StringJoiner(", ", "{", "}");
+        StringJoiner keeping = new StringJoiner(", ", "{", "}");
+        List<NamedMeasure> all = summarize.allMeasures();
+        for (int i = 0; i < all.size(); i++) {
+            NamedMeasure measure = all.get(i);
+            String member;
+            if (measure.expression() instanceof MeasureValue value) {
+                member = value.measure().uniqueName();
+            } else {
+                member = "[Measures]." + MdxNames.quote("DAX " + measure.name());
+                mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS ")
+                        .append(condition(measure.expression()));
+            }
+            measures.add(member);
+            if (i < summarize.measures().size()) {
+                keeping.add(member);
+            }
+            sources.add(new ValueSource.CellValue(i));
+        }
+        if (!mdx.isEmpty()) {
+            mdx.append(" ");
+        }
+        return new Measures(measures.toString(), keeping.toString());
+    }
+
+    /**
+     * @param cube     the cube name, as MDX writes it
+     * @param generate the plan
+     * @return the MDX query computing the plan's table: its rows are MDX
+     *         {@code Generate} of the outer set, joining each of its tuples
+     *         with the inner set computed for it
+     */
+    public static MdxQuery generate(String cube, Generate generate) {
+        Summarize inner = generate.inner();
+        List<ModelColumn> outerColumns = Summarize.filterColumns(generate.outer());
+        // the outer hierarchies the inner grouping goes deeper in are its own on the axis
+        List<String> hierarchies = new ArrayList<>(deepest(outerColumns).keySet());
+        hierarchies.removeAll(deepest(inner.groupBy()).keySet());
+        hierarchies.addAll(deepest(inner.groupBy()).keySet());
+
+        List<ValueSource> sources = new ArrayList<>();
+        List<ModelColumn> grouped = new ArrayList<>(outerColumns);
+        grouped.addAll(inner.groupBy());
+        for (ModelColumn column : grouped) {
+            sources.add(new ValueSource.MemberName(hierarchies.indexOf(column.hierarchy()), column.depth()));
+        }
+        StringBuilder mdx = new StringBuilder();
+        Measures measures = measures(inner, mdx, sources);
+
+        String set = filterSet(generate.outer());
+        if (!inner.groupBy().isEmpty()) {
+            // computed for the members of each outer tuple
+            String innerSet = conditionAndTop(innerSet(generate), inner);
+            if (!inner.measures().isEmpty()) {
+                innerSet = "NonEmpty(" + innerSet + ", " + measures.keeping() + ")";
+            }
+            set = generateSet(generate, innerSet);
+        }
+        mdx.append("SELECT ").append(measures.all()).append(" ON COLUMNS, ").append(set).append(" ON ROWS FROM ")
+                .append(cube);
+        return new MdxQuery(mdx.toString(), sources, true);
+    }
+
+    /**
+     * @param innerSet the inner set, computed for the members of each outer tuple
+     * @return MDX {@code Generate} of the outer set, joining each of its tuples
+     *         with the inner set
+     */
+    private static String generateSet(Generate generate, String innerSet) {
+        // the members of a hierarchy the inner set goes deeper in are its own
+        List<String> outer = new ArrayList<>(deepest(Summarize.filterColumns(generate.outer())).keySet());
+        outer.removeAll(deepest(generate.inner().groupBy()).keySet());
+        if (outer.isEmpty()) {
+            return "Generate(" + filterSet(generate.outer()) + ", " + innerSet + ")";
+        }
+        StringJoiner current = new StringJoiner(", ", outer.size() == 1 ? "{" : "{(", outer.size() == 1 ? "}" : ")}");
+        outer.forEach(h -> current.add(h + ".CurrentMember"));
+        return "Generate(" + filterSet(generate.outer()) + ", CrossJoin(" + current + ", " + innerSet + "))";
+    }
+
+    /**
+     * @return the cross join of the deepest level of each hierarchy the inner
+     *         grouping groups by: of a hierarchy of the outer table the
+     *         members under its current member
+     */
+    private static String innerSet(Generate generate) {
+        Map<String, ModelColumn> outer = deepest(Summarize.filterColumns(generate.outer()));
+        String set = null;
+        for (ModelColumn column : deepest(generate.inner().groupBy()).values()) {
+            String members = outer.containsKey(column.hierarchy())
+                    ? "Descendants(" + column.hierarchy() + ".CurrentMember, " + column.level() + ")"
+                    : column.level() + ".Members";
+            set = set == null ? members : "CrossJoin(" + set + ", " + members + ")";
+        }
+        return set;
+    }
+
     /** @return the cross join of the deepest level of each hierarchy grouped by */
     private static String set(Summarize summarize) {
         String set = null;
@@ -163,6 +257,7 @@ public final class MdxGenerator {
         case Summarize summarize -> conditionAndTop(set(summarize), summarize);
         case Filter f -> "Filter(" + filterSet(f.source()) + ", "
                 + condition(f.condition(), Summarize.filterColumns(f.source())) + ")";
+        case Generate generate -> generateSet(generate, conditionAndTop(innerSet(generate), generate.inner()));
         default -> throw new IllegalArgumentException("no filter table: " + filter);
         };
     }
@@ -221,6 +316,22 @@ public final class MdxGenerator {
                 + (logical.operator() == LogicalOperator.AND ? " AND " : " OR ") + operand(logical.right(), columns);
         case Not not -> "NOT " + operand(not.operand(), columns);
         case IsBlank isBlank -> "IsEmpty(" + condition(isBlank.operand(), columns) + ")";
+        case ColumnAggregate aggregate -> aggregate(aggregate);
+        };
+    }
+
+    private static String aggregate(ColumnAggregate aggregate) {
+        ModelColumn column = aggregate.column();
+        String members = "Existing " + column.level() + ".Members";
+        String name = column.hierarchy() + ".CurrentMember.Name";
+        String number = "IIf(IsNumeric(" + name + "), CDbl(" + name + "), NULL)";
+        return switch (aggregate.aggregation()) {
+        case SUM -> "Sum(" + members + ", " + number + ")";
+        case AVERAGE -> "Avg(" + members + ", " + number + ")";
+        case MIN -> "Min(" + members + ", " + number + ")";
+        case MAX -> "Max(" + members + ", " + number + ")";
+        // the names of members are never BLANK; nothing to count is BLANK, as in DAX
+        case COUNT, COUNTA, DISTINCTCOUNT -> "IIf(Count(" + members + ") = 0, NULL, Count(" + members + "))";
         };
     }
 
