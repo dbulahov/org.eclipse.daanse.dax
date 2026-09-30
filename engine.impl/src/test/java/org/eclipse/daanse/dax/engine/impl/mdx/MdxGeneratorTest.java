@@ -25,10 +25,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.TestModel;
+import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
+import org.eclipse.daanse.dax.engine.impl.model.ModelTable;
+import org.eclipse.daanse.dax.engine.impl.model.TabularModel;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.CellValue;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.MemberName;
 import org.eclipse.daanse.dax.engine.impl.plan.Binder;
+import org.eclipse.daanse.dax.engine.impl.plan.Generate;
 import org.eclipse.daanse.dax.engine.impl.plan.NamedMeasure;
 import org.eclipse.daanse.dax.engine.impl.plan.QueryPlan;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan;
@@ -39,6 +44,7 @@ import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Logical;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.MeasureValue;
 import org.eclipse.daanse.dax.engine.impl.plan.ScalarPlan.Not;
 import org.eclipse.daanse.dax.engine.impl.plan.Summarize;
+import org.eclipse.daanse.dax.engine.impl.plan.TopN;
 import org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator;
 import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator;
 import org.eclipse.daanse.dax.parser.ccc.CCCDaxParserProvider;
@@ -185,6 +191,19 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void calculateTableFiltersTheMeasuresOfItsIterators() throws Exception {
+        assertThat(mdx("EVALUATE CALCULATETABLE(FILTER(VALUES('Markets'[Country]), [Sales] > 1), "
+                + "'Product'[Category] = \"Bikes\")"))
+                .isEqualTo("SELECT {} ON COLUMNS, Filter([Markets].[Country].Members, [Measures].[Sales] > 1) "
+                        + "ON ROWS FROM [C] WHERE Filter([Product].[Category].Members, "
+                        + "UCase([Product].CurrentMember.Name) = \"BIKES\")");
+        assertThat(mdx("EVALUATE CALCULATETABLE(VALUES('Product'[Subcategory]), 'Product'[Category] = \"Bikes\")"))
+                .isEqualTo("SELECT {} ON COLUMNS, Exists([Product].[Subcategory].Members, "
+                        + "Filter([Product].[Category].Members, UCase([Product].CurrentMember.Name) = \"BIKES\")) "
+                        + "ON ROWS FROM [C]");
+    }
+
+    @Test
     void addedMeasuresKeepTheRows() throws Exception {
         assertThat(mdx("EVALUATE ADDCOLUMNS(VALUES('Markets'[Country]), \"S\", [Sales])"))
                 .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, [Markets].[Country].Members ON ROWS FROM [C]");
@@ -209,5 +228,153 @@ class MdxGeneratorTest {
     @Test
     void quotesNames() {
         assertThat(MdxNames.quote("a]b")).isEqualTo("[a]]b]");
+    }
+
+    @Test
+    void rowOfCalculateSumOfColumnByDottedLevel() throws Exception {
+        assertThat(mdx("EVALUATE ROW(\"S\", CALCULATE(SUM('Product'[Product.Category])))"))
+                .isEqualTo("WITH MEMBER [Measures].[DAX S] AS Sum(Existing [Product].[Category].Members, "
+                        + "IIf(IsNumeric([Product].CurrentMember.Name), CDbl([Product].CurrentMember.Name), NULL)) "
+                        + "SELECT {[Measures].[DAX S]} ON COLUMNS FROM [C]");
+    }
+
+    @Test
+    void distinctCountOfColumnByGroups() throws Exception {
+        assertThat(mdx("EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"N\", DISTINCTCOUNT('Product'[Subcategory]))"))
+                .isEqualTo("WITH MEMBER [Measures].[DAX N] AS IIf(Count(Existing [Product].[Subcategory].Members) = 0, "
+                        + "NULL, Count(Existing [Product].[Subcategory].Members)) "
+                        + "SELECT {[Measures].[DAX N]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C]");
+    }
+
+    @Test
+    void generateTopNForEachRow() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider()
+                .newParser("EVALUATE GENERATE(VALUES('Date'[Year]), TOPN(3, VALUES('Markets'[Country]), [Sales]))")
+                .parseDaxStatement());
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {} ON COLUMNS, Generate([Date].[Year].Members, "
+                + "CrossJoin({[Date].CurrentMember}, TopCount(NonEmpty([Markets].[Country].Members, "
+                + "{[Measures].[Sales]}), 3, [Measures].[Sales]))) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(1, 1));
+        assertThat(plan.evaluates().get(0).table().columns()).extracting(c -> c.name())
+                .containsExactly("Date[Year]", "Markets[Country]");
+    }
+
+    @Test
+    void generateOfFilteredTableAndGroupingWithMeasures() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser(
+                "EVALUATE GENERATE(KEEPFILTERS(FILTER(VALUES('Product'[Category]), 'Product'[Category] = \"Bikes\")), "
+                        + "SUMMARIZECOLUMNS('Markets'[Country], 'Date'[Year], \"S\", [Sales]))")
+                .parseDaxStatement());
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, Generate(Filter("
+                + "[Product].[Category].Members, UCase([Product].CurrentMember.Name) = \"BIKES\"), "
+                + "CrossJoin({[Product].CurrentMember}, NonEmpty(CrossJoin([Markets].[Country].Members, "
+                + "[Date].[Year].Members), {[Measures].[Sales]}))) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(1, 1),
+                new MemberName(2, 1), new CellValue(0));
+    }
+
+    @Test
+    void generateOfRowComputesItForEachRow() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider()
+                .newParser("EVALUATE GENERATE(VALUES('Product'[Category]), ROW(\"N\", ISBLANK([Sales])))")
+                .parseDaxStatement());
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Measures].[DAX N] AS IsEmpty([Measures].[Sales]) "
+                + "SELECT {[Measures].[DAX N]} ON COLUMNS, [Product].[Category].Members ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 1), new CellValue(0));
+    }
+
+    @Test
+    void generateWithoutMeasuresIsASlicerOfItsTuples() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(ROW("S", [Sales]), KEEPFILTERS(GENERATE(KEEPFILTERS(VALUES('Date'[Year])),
+                    FILTER(KEEPFILTERS(VALUES('Markets'[Country])), NOT(ISBLANK([Sales]))))))
+                """).parseDaxStatement());
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE "
+                + "Generate([Date].[Year].Members, CrossJoin({[Date].CurrentMember}, "
+                + "Filter([Markets].[Country].Members, NOT IsEmpty([Measures].[Sales]))))");
+        assertThat(query.sources()).containsExactly(new CellValue(0));
+    }
+
+    @Test
+    void orFunctionOfMeasuresFiltersTheGroups() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE TOPN(501, ADDCOLUMNS(KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Markets'[Country])),
+                        OR(NOT(ISBLANK('Measures'[Sales])), NOT(ISBLANK('Measures'[Unit Sales]))))),
+                    "S", 'Measures'[Sales], "U", 'Measures'[Unit Sales]), 'Markets'[Country], 1)
+                ORDER BY 'Markets'[Country]
+                """).parseDaxStatement());
+        TopN topN = (TopN) plan.evaluates().get(0).table();
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) topN.source());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales], [Measures].[Unit Sales]} ON COLUMNS, "
+                + "Filter([Markets].[Country].Members, NOT IsEmpty([Measures].[Sales]) "
+                + "OR NOT IsEmpty([Measures].[Unit Sales])) ON ROWS FROM [C]");
+        assertThat(topN.columns()).extracting(c -> c.name()).containsExactly("Markets[Country]", "[S]", "[U]");
+    }
+
+    @Test
+    void generateOfGenerateGoingDeeperInAHierarchyIsASlicer() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(ROW("S", 'Measures'[Sales], "U", 'Measures'[Unit Sales]),
+                    KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(KEEPFILTERS(VALUES('Product'[Category])),
+                            VALUES('Date'[Year]))),
+                        FILTER(KEEPFILTERS(VALUES('Product'[Subcategory])),
+                            OR(NOT(ISBLANK('Measures'[Sales])), NOT(ISBLANK('Measures'[Unit Sales])))))))
+                """).parseDaxStatement());
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales], [Measures].[Unit Sales]} ON COLUMNS "
+                + "FROM [C] WHERE Generate(Generate([Product].[Category].Members, "
+                + "CrossJoin({[Product].CurrentMember}, [Date].[Year].Members)), "
+                + "CrossJoin({[Date].CurrentMember}, Filter(Descendants([Product].CurrentMember, "
+                + "[Product].[Subcategory]), NOT IsEmpty([Measures].[Sales]) "
+                + "OR NOT IsEmpty([Measures].[Unit Sales]))))");
+    }
+
+    @Test
+    void generateGoingDeeperInAHierarchyReadsTheOuterColumnFromTheAncestor() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider()
+                .newParser("EVALUATE GENERATE(VALUES('Date'[Year]), "
+                        + "SUMMARIZECOLUMNS('Product'[Category], 'Product'[Subcategory], \"S\", [Sales]))")
+                .parseDaxStatement());
+        // not deeper: only other hierarchies of the outer table are its own
+        assertThat(plan.evaluates().get(0).table().columns()).extracting(c -> c.name())
+                .containsExactly("Date[Year]", "Product[Category]", "Product[Subcategory]", "[S]");
+        plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider()
+                .newParser("EVALUATE GENERATE(VALUES('Product'[Category]), "
+                        + "SUMMARIZECOLUMNS('Product'[Subcategory], 'Date'[Year], \"S\", [Sales]))")
+                .parseDaxStatement());
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, Generate("
+                + "[Product].[Category].Members, NonEmpty(CrossJoin(Descendants([Product].CurrentMember, "
+                + "[Product].[Subcategory]), [Date].[Year].Members), {[Measures].[Sales]})) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(0, 2),
+                new MemberName(1, 1), new CellValue(0));
+    }
+
+    @Test
+    void generatesGoingDeeperLevelByLevel() throws Exception {
+        ModelColumn product = new ModelColumn("Product", "Name", "[Product]", "[Product].[Name]", 3, DaxType.STRING);
+        TabularModel model = new TabularModel("[Sales]",
+                List.of(new ModelTable("Product", List.of(CATEGORY, SUBCATEGORY, product)),
+                        new ModelTable("Date", List.of(YEAR))),
+                List.of(SALES));
+        QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(ROW("S", 'Measures'[Sales]),
+                    KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(GENERATE(
+                            KEEPFILTERS(GENERATE(KEEPFILTERS(VALUES('Date'[Year])), VALUES('Product'[Category]))),
+                            VALUES('Product'[Subcategory]))),
+                        FILTER(KEEPFILTERS(VALUES('Product'[Name])), NOT(ISBLANK('Measures'[Sales]))))))
+                """).parseDaxStatement());
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE "
+                + "Generate(Generate(Generate([Date].[Year].Members, "
+                + "CrossJoin({[Date].CurrentMember}, [Product].[Category].Members)), "
+                + "CrossJoin({[Date].CurrentMember}, Descendants([Product].CurrentMember, [Product].[Subcategory]))), "
+                + "CrossJoin({[Date].CurrentMember}, Filter(Descendants([Product].CurrentMember, [Product].[Name]), "
+                + "NOT IsEmpty([Measures].[Sales]))))");
     }
 }

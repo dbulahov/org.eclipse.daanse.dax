@@ -17,10 +17,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.eclipse.daanse.dax.engine.api.DaxExecutionException;
 import org.eclipse.daanse.dax.engine.api.DaxType;
+import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
 import org.eclipse.daanse.dax.engine.impl.model.ModelMeasure;
 import org.eclipse.daanse.dax.model.api.expression.BooleanExpression.BooleanOperator;
 import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOperator;
@@ -29,8 +32,8 @@ import org.eclipse.daanse.dax.model.api.expression.LogicalExpression.LogicalOper
  * How to compute a scalar value from a row of a table, e.g. the condition of
  * {@code FILTER}. A value is {@code null} for BLANK.
  * <p>
- * A {@link MeasureValue} only the cube computes: a plan containing one is
- * translated into MDX, not evaluated.
+ * A {@link MeasureValue} and a {@link ColumnAggregate} only the cube computes:
+ * a plan containing one is translated into MDX, not evaluated.
  * </p>
  */
 public sealed interface ScalarPlan {
@@ -77,6 +80,38 @@ public sealed interface ScalarPlan {
         @Override
         public Object evaluate(List<Object> row) {
             throw new IllegalStateException("the measure " + measure.uniqueName() + " is computed by the cube only");
+        }
+    }
+
+    /** An aggregation of the values of a column, as DAX's {@code SUM(column)}. */
+    enum Aggregation {
+        SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, DISTINCTCOUNT;
+
+        /** @return the aggregation the DAX function computes; empty if it is none */
+        public static Optional<Aggregation> of(String function) {
+            try {
+                return Optional.of(valueOf(function.toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException e) {
+                return Optional.empty();
+            }
+        }
+    }
+
+    /**
+     * An aggregation of a column, as the cube computes it for the row: of the
+     * names of the members of the column's level that exist with the filters
+     * and the row's members.
+     */
+    record ColumnAggregate(Aggregation aggregation, ModelColumn column) implements ScalarPlan {
+
+        public ColumnAggregate {
+            Objects.requireNonNull(aggregation, "aggregation");
+            Objects.requireNonNull(column, "column");
+        }
+
+        @Override
+        public Object evaluate(List<Object> row) {
+            throw new IllegalStateException(aggregation + " of " + column.daxName() + " is computed by the cube only");
         }
     }
 

@@ -128,6 +128,18 @@ class BinderTest {
     }
 
     @Test
+    void columnReferredToByLevelUniqueNameInRowsAndOrderBy() throws Exception {
+        QueryPlan plan = bind("""
+                EVALUATE TOPN(501, FILTER(KEEPFILTERS(VALUES('Product'[Product.Category])),
+                    NOT(ISBLANK('Product'[Product.Category]))), 'Product'[Product.Category], 1)
+                ORDER BY 'Product'[Product.Category]""");
+        TopN topN = (TopN) plan.evaluates().get(0).table();
+        assertThat(topN.keys()).containsExactly(new SortKey(0, true));
+        assertThat(topN.columns()).extracting(DaxColumn::name).containsExactly("Product[Category]");
+        assertThat(plan.evaluates().get(0).orderBy()).containsExactly(new SortKey(0, true));
+    }
+
+    @Test
     void distinctOfColumnGroupsByIt() throws Exception {
         TablePlan plan = single("EVALUATE DISTINCT('Product'[Subcategory])");
         assertThat(plan).isEqualTo(new Summarize(List.of(SUBCATEGORY), List.of()));
@@ -403,6 +415,57 @@ class BinderTest {
     }
 
     @Test
+    void calculateTableAddsItsFiltersToTheGrouping() throws Exception {
+        Filter usa = new Filter(new Summarize(List.of(MARKETS), List.of()),
+                new Comparison(BooleanOperator.EQUAL, new ColumnValue(0), new Constant("USA")));
+        TablePlan expected = new Summarize(List.of(CATEGORY), List.of(new NamedMeasure("S", SALES_AMOUNT)),
+                Optional.empty(), Optional.empty(), List.of(usa));
+        assertThat(single("EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS('Product'[Category], \"S\", [Sales Amount]), "
+                + "'Markets'[Country] = \"USA\")")).isEqualTo(expected);
+        assertThat(single("EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS('Product'[Category], \"S\", [Sales Amount]), "
+                + "KEEPFILTERS(FILTER(VALUES('Markets'[Country]), 'Markets'[Country] = \"USA\")), "
+                + "VALUES('Date'[Year]))")).isEqualTo(expected);
+        // the same as the filter tables of SUMMARIZECOLUMNS
+        assertThat(single("EVALUATE SUMMARIZECOLUMNS('Product'[Category], "
+                + "FILTER(VALUES('Markets'[Country]), 'Markets'[Country] = \"USA\"), \"S\", [Sales Amount])"))
+                .isEqualTo(expected);
+    }
+
+    @Test
+    void calculateTableWithoutFiltersIsItsTable() throws Exception {
+        assertThat(single("EVALUATE CALCULATETABLE('Product')"))
+                .isEqualTo(new Summarize(List.of(CATEGORY, SUBCATEGORY), List.of()));
+        assertThat(single("EVALUATE CALCULATETABLE({1}, 'Product'[Category] = \"Bikes\")"))
+                .isEqualTo(single("EVALUATE {1}"));
+    }
+
+    @Test
+    void calculateTableFiltersTheMeasuresOfIteratorsWithin() throws Exception {
+        ScalarPlan bikes = new Comparison(BooleanOperator.EQUAL, new ColumnValue(0), new Constant("Bikes"));
+        ScalarPlan notUsa = new Not(new InList(new ColumnValue(0), List.of("USA")));
+        Summarize byMeasure = new Summarize(List.of(MARKETS), List.of(), Optional.of(
+                new Comparison(BooleanOperator.GREATER_THAN, new MeasureValue(SALES), new Constant(1L))),
+                Optional.empty(), List.of(new Filter(new Summarize(List.of(CATEGORY), List.of()), bikes)));
+        assertThat(single("EVALUATE CALCULATETABLE(FILTER(VALUES('Markets'[Country]), [Sales] > 1), "
+                + "'Product'[Category] = \"Bikes\")")).isEqualTo(byMeasure);
+        assertThat(single("EVALUATE CALCULATETABLE(TOPN(2, ADDCOLUMNS(VALUES('Product'[Category]), "
+                + "\"S\", [Sales Amount]), 'Product'[Category]), NOT('Markets'[Country] IN {\"USA\"}))"))
+                .isEqualTo(new TopN(new Summarize(List.of(CATEGORY), List.of(), Optional.empty(), Optional.empty(),
+                        List.of(new Filter(new Summarize(List.of(MARKETS), List.of()), notUsa)),
+                        List.of(new NamedMeasure("S", SALES_AMOUNT))), 2, List.of(new SortKey(0, false))));
+    }
+
+    @Test
+    void calculateTableOfValuesFilteredOnItsHierarchy() throws Exception {
+        assertThat(single("EVALUATE CALCULATETABLE(VALUES('Product'[Subcategory]), "
+                + "'Product'[Category] = \"Bikes\" || 'Product'[Category] = \"Clothes\")"))
+                .isEqualTo(new Summarize(List.of(SUBCATEGORY), List.of(), Optional.empty(), Optional.empty(),
+                        List.of(new Filter(new Summarize(List.of(CATEGORY), List.of()), new Logical(LogicalOperator.OR,
+                                new Comparison(BooleanOperator.EQUAL, new ColumnValue(0), new Constant("Bikes")),
+                                new Comparison(BooleanOperator.EQUAL, new ColumnValue(0), new Constant("Clothes")))))));
+    }
+
+    @Test
     void comparisonsAndLogicOfConstants() throws Exception {
         ConstantTable table = (ConstantTable) single("EVALUATE ROW(\"lt\", 1 < 2.5, \"case\", \"a\" = \"A\", "
                 + "\"blankZero\", BLANK() = 0, \"blankText\", BLANK() < \"a\", \"inStrict\", BLANK() IN {0}, "
@@ -456,9 +519,26 @@ class BinderTest {
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], FILTER(VALUES('Product'[Subcategory]), 'Product'[Subcategory] = \"Road\"), \"S\", [Sales Amount])|a filter table on Product[Subcategory], deeper than SUMMARIZECOLUMNS groups by is not supported yet", //
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], FILTER(SUMMARIZECOLUMNS('Product'[Category], 'Markets'[Country]), 'Markets'[Country] = \"USA\"), \"S\", [Sales Amount])|a filter table on hierarchies grouped by and others is not supported yet", //
             "EVALUATE FILTER(SUMMARIZECOLUMNS('Product'[Category], FILTER(VALUES('Markets'[Country]), [Sales] > 1), \"S\", [Sales Amount]), [Unit Sales] > 1)|FILTER by a measure of SUMMARIZECOLUMNS with filter tables is not supported yet", //
+            "EVALUATE CALCULATETABLE('Product', 1 = 1)|a condition filtering CALCULATETABLE must refer to a column", //
+            "EVALUATE CALCULATETABLE('Product', 'Markets'[Country] = \"USA\" && 'Date'[Year] = \"2020\")|a condition filtering CALCULATETABLE must refer to columns of one table", //
+            "EVALUATE CALCULATETABLE('Product', 'Markets'[Country] = 1)|CALCULATETABLE with a condition other than on the text of columns is not supported yet", //
+            "EVALUATE CALCULATETABLE('Product', [Sales Amount] > 1)|a condition filtering CALCULATETABLE must refer to a column", //
+            "EVALUATE CALCULATETABLE('Product', {1})|CALCULATETABLE with a filter table of kind ConstantTable or with conditions other than on the text of columns and on measures is not supported yet", //
+            "EVALUATE CALCULATETABLE('Product', ALL('Product'))|the table function ALL is not supported yet", //
+            "EVALUATE CALCULATETABLE(CALCULATETABLE('Product', 'Markets'[Country] = \"USA\"), 'Markets'[Country] = \"France\")|CALCULATETABLE filtering Markets[Country] of a table filtered on it already is not supported yet", //
+            "EVALUATE CALCULATETABLE(ROW(\"S\", [Sales]), FILTER(VALUES('Markets'[Country]), [Sales] > 1), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
+            "EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS('Product'[Category], TOPN(3, VALUES('Markets'[Country]), [Sales]), \"S\", [Sales]), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
+            "EVALUATE CALCULATETABLE(VALUES('Store'[City]), 'Store'[Type] = \"Big\")|CALCULATETABLE of columns without measures filtered on other hierarchies of their table is not supported yet", //
+            "EVALUATE CALCULATETABLE(FILTER(VALUES('Product'[Category]), [Sales] > 1), 'Product'[Subcategory] = \"Road\")|a filter table on Product[Subcategory], deeper than SUMMARIZECOLUMNS groups by is not supported yet", //
+            "EVALUATE FILTER(CALCULATETABLE(VALUES('Product'[Category]), 'Markets'[Country] = \"USA\"), [Sales] > 1)|FILTER by a measure of SUMMARIZECOLUMNS with filter tables is not supported yet", //
             "EVALUATE ADDCOLUMNS('Product')|ADDCOLUMNS takes a table and pairs of a name and an expression", //
             "EVALUATE ADDCOLUMNS('Product', \"x\")|ADDCOLUMNS takes a table and pairs of a name and an expression", //
             "EVALUATE ADDCOLUMNS('Product', \"category\", 1)|ADDCOLUMNS: the column [category] exists already", //
+            "EVALUATE GENERATE(VALUES('Product'[Category]))|GENERATE takes two tables", //
+            "EVALUATE GENERATE(VALUES('Product'[Subcategory]), VALUES('Product'[Category]))|GENERATE of a second table with Product[Category], not deeper than the first table's columns of its hierarchy is not supported yet", //
+            "EVALUATE GENERATE(VALUES('Product'[Category]), CALCULATETABLE(VALUES('Date'[Year]), 'Markets'[Country] = \"USA\"))|GENERATE with a second table other than a grouping of columns and measures, e.g. VALUES, TOPN or FILTER by a measure, SUMMARIZECOLUMNS without filter tables or ROW is not supported yet", //
+            "EVALUATE GENERATE(SUMMARIZECOLUMNS('Product'[Category], \"S\", [Sales]), VALUES('Date'[Year]))|GENERATE of a first table of kind Summarize, with measures or with conditions other than on the text of columns and on measures is not supported yet", //
+            "EVALUATE GENERATE({1}, VALUES('Date'[Year]))|GENERATE of a first table of kind ConstantTable, with measures or with conditions other than on the text of columns and on measures is not supported yet", //
             "EVALUATE ADDCOLUMNS({1}, \"a\", 1, \"A\", 2)|ADDCOLUMNS: the column [A] exists already", //
             "EVALUATE ADDCOLUMNS({1}, \"S\", [Sales Amount])|ADDCOLUMNS of a table constructor by a measure is not supported yet", //
             "EVALUATE ADDCOLUMNS(ROW(\"a\", [Sales Amount]), \"b\", [Unit Sales])|ADDCOLUMNS by a measure of ROW is not supported yet", //

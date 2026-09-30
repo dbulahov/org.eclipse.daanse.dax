@@ -19,7 +19,7 @@ import org.eclipse.daanse.dax.engine.api.DaxColumn;
 /**
  * How to compute the table of one {@code EVALUATE}.
  */
-public sealed interface TablePlan permits ConstantTable, Summarize, Filter, TopN, AddColumns {
+public sealed interface TablePlan permits ConstantTable, Summarize, Filter, TopN, AddColumns, Generate {
 
     /** @return the columns of the table, in order */
     List<DaxColumn> columns();
