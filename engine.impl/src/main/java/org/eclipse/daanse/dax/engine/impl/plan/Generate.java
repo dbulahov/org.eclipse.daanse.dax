@@ -34,8 +34,9 @@ import org.eclipse.daanse.dax.engine.api.DaxColumn;
  *              by its columns, as a filter table is (see
  *              {@link Summarize#filters()}); its columns come first
  * @param inner the inner grouping, without filter tables, of other hierarchies
- *              or of deeper levels of those of the outer table, then of the
- *              members under the outer one; its columns come after
+ *              or of levels of those of the outer table: of a deeper level the
+ *              members under the outer one, of one not deeper the outer one's
+ *              ancestor; its columns come after
  */
 public record Generate(TablePlan outer, Summarize inner) implements TablePlan {
 

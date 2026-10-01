@@ -14,12 +14,18 @@ package org.eclipse.daanse.dax.engine.impl;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.eclipse.daanse.dax.engine.api.DaxException;
+import org.eclipse.daanse.dax.engine.api.DaxExecutionException;
 import org.eclipse.daanse.dax.engine.api.DaxResult;
 import org.eclipse.daanse.dax.engine.api.DaxTable;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxGenerator;
+import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
 import org.eclipse.daanse.dax.engine.impl.plan.AddColumns;
 import org.eclipse.daanse.dax.engine.impl.plan.ConstantTable;
 import org.eclipse.daanse.dax.engine.impl.plan.DaxValues;
@@ -27,6 +33,7 @@ import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan;
 import org.eclipse.daanse.dax.engine.impl.plan.EvaluatePlan.SortKey;
 import org.eclipse.daanse.dax.engine.impl.plan.Filter;
 import org.eclipse.daanse.dax.engine.impl.plan.Generate;
+import org.eclipse.daanse.dax.engine.impl.plan.Sample;
 import org.eclipse.daanse.dax.engine.impl.plan.Summarize;
 import org.eclipse.daanse.dax.engine.impl.plan.TablePlan;
 import org.eclipse.daanse.dax.engine.impl.plan.TopN;
@@ -36,6 +43,9 @@ import org.eclipse.daanse.dax.engine.impl.plan.TopN;
  * the other.
  */
 final class DaxResultImpl implements DaxResult {
+
+    /** At most this many groups of the values of properties are calculated members of a query. */
+    static final int MAX_GROUPS = 10_000;
 
     private final List<EvaluatePlan> plans;
     private final String cube;
@@ -90,12 +100,41 @@ final class DaxResultImpl implements DaxResult {
     private List<List<Object>> rows(TablePlan table) throws DaxException {
         return switch (table) {
         case ConstantTable constant -> constant.rows();
-        case Summarize summarize -> runner.run(MdxGenerator.summarize(cube, summarize));
-        case Generate generate -> runner.run(MdxGenerator.generate(cube, generate));
+        case Summarize summarize -> summarize(summarize);
+        case Generate generate -> distinct(runner.run(MdxGenerator.generate(cube, generate)),
+                generate.inner().allMeasures().isEmpty());
         case Filter filter -> filter.apply(rows(filter.source()));
         case TopN topN -> topN.apply(rows(topN.source()));
+        case Sample sample -> sample.apply(rows(sample.source()));
         case AddColumns addColumns -> addColumns.apply(rows(addColumns.source()));
         };
+    }
+
+    /**
+     * Without measures a group is its values: members of the same names or
+     * property values are one. A grouping by the values of properties first
+     * queries the values of each such hierarchy, then the measures of their
+     * groups.
+     */
+    private List<List<Object>> summarize(Summarize summarize) throws DaxException {
+        Map<String, List<List<Object>>> groups = new LinkedHashMap<>();
+        for (String hierarchy : summarize.byValues()) {
+            List<ModelColumn> columns = summarize.groupBy().stream().filter(c -> c.hierarchy().equals(hierarchy))
+                    .toList();
+            List<List<Object>> values = distinct(runner.run(MdxGenerator.summarize(cube,
+                    new Summarize(columns, List.of()))), true);
+            if (values.isEmpty()) {
+                return List.of();
+            }
+            if (values.size() > MAX_GROUPS) {
+                throw new DaxExecutionException("grouping by the values of " + columns.stream()
+                        .map(ModelColumn::daxName).collect(Collectors.joining(", ")) + " gives " + values.size()
+                        + " groups, more than " + MAX_GROUPS + " computed as calculated members");
+            }
+            groups.put(hierarchy, values);
+        }
+        return distinct(runner.run(MdxGenerator.summarize(cube, summarize, groups)),
+                summarize.allMeasures().isEmpty());
     }
 
     private static List<List<Object>> sorted(List<List<Object>> rows, List<SortKey> keys) {
@@ -113,5 +152,9 @@ final class DaxResultImpl implements DaxResult {
         List<List<Object>> sorted = new ArrayList<>(rows);
         sorted.sort(order);
         return sorted;
+    }
+
+    private static List<List<Object>> distinct(List<List<Object>> rows, boolean distinct) {
+        return distinct ? new ArrayList<>(new LinkedHashSet<>(rows)) : rows;
     }
 }

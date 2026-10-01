@@ -140,6 +140,74 @@ class BinderTest {
     }
 
     @Test
+    void sampleOfConstantTableSpreadsRowsEvenly() throws Exception {
+        assertThat(((ConstantTable) single("EVALUATE SAMPLE(3, {5, 1, 4, 2, 3}, [Value])")).rows())
+                .containsExactly(List.of(1L), List.of(3L), List.of(5L));
+        assertThat(((ConstantTable) single("EVALUATE SAMPLE(10, {2, 1, 3}, [Value])")).rows())
+                .containsExactly(List.of(1L), List.of(2L), List.of(3L));
+        assertThat(((ConstantTable) single("EVALUATE SAMPLE(2, {2, 1, 3}, [Value], DESC)")).rows())
+                .containsExactly(List.of(3L), List.of(1L));
+        assertThat(((ConstantTable) single("EVALUATE SAMPLE(1, {2, 1, 3}, [Value])")).rows())
+                .containsExactly(List.of(1L));
+        assertThat(((ConstantTable) single("EVALUATE SAMPLE(0, {1, 2}, [Value])")).rows()).isEmpty();
+    }
+
+    @Test
+    void sampleOfValuesFilteredByMeasuresWithAddedMeasures() throws Exception {
+        QueryPlan plan = bind("""
+                EVALUATE ADDCOLUMNS(KEEPFILTERS(SAMPLE(3502, FILTER(KEEPFILTERS(VALUES('Markets'[Country])),
+                        OR(NOT(ISBLANK('Measures'[Sales])), NOT(ISBLANK('Measures'[Unit Sales])))),
+                        'Markets'[Country], 1)),
+                    "S", 'Measures'[Sales], "U", 'Measures'[Unit Sales])
+                ORDER BY 'Markets'[Country]""");
+        Sample sample = (Sample) plan.evaluates().get(0).table();
+        assertThat(sample.count()).isEqualTo(3502);
+        assertThat(sample.keys()).containsExactly(new SortKey(0, true));
+        // the measures are added to the grouping the cube computes, below the sample
+        Summarize summarize = (Summarize) sample.source();
+        assertThat(summarize.groupBy()).containsExactly(MARKETS);
+        assertThat(summarize.condition()).contains(new Logical(LogicalOperator.OR,
+                new Not(new ScalarPlan.IsBlank(new MeasureValue(SALES))),
+                new Not(new ScalarPlan.IsBlank(new MeasureValue(UNIT_SALES)))));
+        assertThat(summarize.added()).containsExactly(new NamedMeasure("S", new MeasureValue(SALES)),
+                new NamedMeasure("U", new MeasureValue(UNIT_SALES)));
+        assertThat(sample.columns()).extracting(DaxColumn::name).containsExactly("Markets[Country]", "[S]", "[U]");
+        assertThat(plan.evaluates().get(0).orderBy()).containsExactly(new SortKey(0, true));
+    }
+
+    @Test
+    void summarizeOfTableGroupsByItsColumns() throws Exception {
+        QueryPlan plan = bind("""
+                EVALUATE TOPN(501, FILTER(KEEPFILTERS(SUMMARIZE(VALUES('Product'),
+                        'Product'[Product.Subcategory], 'Product'[Product.Category])),
+                    OR(NOT(ISBLANK('Product'[Product.Subcategory])),
+                        NOT(ISBLANK('Product'[Product.Category])))),
+                    'Product'[Product.Subcategory], 1, 'Product'[Product.Category], 1)
+                ORDER BY 'Product'[Product.Subcategory], 'Product'[Product.Category]""");
+        assertThat(plan.evaluates().get(0).table()).isEqualTo(new TopN(new Filter(
+                new Summarize(List.of(SUBCATEGORY, CATEGORY), List.of()),
+                new Logical(LogicalOperator.OR, new Not(new ScalarPlan.IsBlank(new ColumnValue(0))),
+                        new Not(new ScalarPlan.IsBlank(new ColumnValue(1))))),
+                501, List.of(new SortKey(0, true), new SortKey(1, true))));
+        assertThat(plan.evaluates().get(0).table().columns()).extracting(DaxColumn::name)
+                .containsExactly("Product[Subcategory]", "Product[Category]");
+        assertThat(single("EVALUATE SUMMARIZE('Product', 'Product'[Category])"))
+                .isEqualTo(new Summarize(List.of(CATEGORY), List.of()));
+        assertThat(single("EVALUATE SUMMARIZE(DISTINCT(VALUES('Product'[Category])), 'Product'[Category])"))
+                .isEqualTo(new Summarize(List.of(CATEGORY), List.of()));
+    }
+
+    @Test
+    void summarizeAddsItsMeasures() throws Exception {
+        TablePlan plan = single("EVALUATE SUMMARIZE('Markets', 'Markets'[Country], \"S\", [Sales], "
+                + "\"Empty\", ISBLANK([Unit Sales]))");
+        assertThat(plan).isEqualTo(new Summarize(List.of(MARKETS), List.of()).withAdded(List.of(
+                new NamedMeasure("S", new MeasureValue(SALES)),
+                new NamedMeasure("Empty", new ScalarPlan.IsBlank(new MeasureValue(UNIT_SALES))))));
+        assertThat(plan.columns()).extracting(DaxColumn::name).containsExactly("Markets[Country]", "[S]", "[Empty]");
+    }
+
+    @Test
     void distinctOfColumnGroupsByIt() throws Exception {
         TablePlan plan = single("EVALUATE DISTINCT('Product'[Subcategory])");
         assertThat(plan).isEqualTo(new Summarize(List.of(SUBCATEGORY), List.of()));
@@ -535,7 +603,16 @@ class BinderTest {
             "EVALUATE ADDCOLUMNS('Product', \"x\")|ADDCOLUMNS takes a table and pairs of a name and an expression", //
             "EVALUATE ADDCOLUMNS('Product', \"category\", 1)|ADDCOLUMNS: the column [category] exists already", //
             "EVALUATE GENERATE(VALUES('Product'[Category]))|GENERATE takes two tables", //
-            "EVALUATE GENERATE(VALUES('Product'[Subcategory]), VALUES('Product'[Category]))|GENERATE of a second table with Product[Category], not deeper than the first table's columns of its hierarchy is not supported yet", //
+            "EVALUATE SUMMARIZE('Product')|SUMMARIZE takes a table, columns and pairs of a name and an expression", //
+            "EVALUATE SUMMARIZE('Product', 'Product'[Category], \"x\")|SUMMARIZE takes pairs of a name and an expression after its columns", //
+            "EVALUATE SUMMARIZE('Product', 'Markets'[Country])|SUMMARIZE: the column Markets[Country] is not of its table", //
+            "EVALUATE SUMMARIZE(VALUES('Product'[Category]), 'Product'[Subcategory])|SUMMARIZE: the column Product[Subcategory] is not of its table", //
+            "EVALUATE SUMMARIZE('Product', ROLLUP('Product'[Category]))|SUMMARIZE with ROLLUP is not supported yet", //
+            "EVALUATE SUMMARIZE('Product', 'Product'[Category], \"x\", 1)|SUMMARIZE with an expression of kind NumericLiteral of no measure is not supported yet", //
+            "EVALUATE SUMMARIZE('Product', 'Product'[Category], \"x\", [Sales], \"X\", [Sales])|SUMMARIZE: the column [X] exists already", //
+            "EVALUATE SUMMARIZE(FILTER(VALUES('Markets'[Country]), [Sales] > 1), 'Markets'[Country])|SUMMARIZE of a table other than a table, its VALUES or DISTINCT or a grouping of columns is not supported yet", //
+            "EVALUATE SAMPLE(3, VALUES('Markets'[Country]))|SAMPLE takes a number of rows, a table and expressions to order by", //
+            "EVALUATE SAMPLE(3, VALUES('Markets'[Country]), [Sales])|SAMPLE by a measure is not supported yet", //
             "EVALUATE GENERATE(VALUES('Product'[Category]), CALCULATETABLE(VALUES('Date'[Year]), 'Markets'[Country] = \"USA\"))|GENERATE with a second table other than a grouping of columns and measures, e.g. VALUES, TOPN or FILTER by a measure, SUMMARIZECOLUMNS without filter tables or ROW is not supported yet", //
             "EVALUATE GENERATE(SUMMARIZECOLUMNS('Product'[Category], \"S\", [Sales]), VALUES('Date'[Year]))|GENERATE of a first table of kind Summarize, with measures or with conditions other than on the text of columns and on measures is not supported yet", //
             "EVALUATE GENERATE({1}, VALUES('Date'[Year]))|GENERATE of a first table of kind ConstantTable, with measures or with conditions other than on the text of columns and on measures is not supported yet", //

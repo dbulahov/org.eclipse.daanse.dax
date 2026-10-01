@@ -13,11 +13,13 @@
 package org.eclipse.daanse.dax.engine.impl.model;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 
 /**
- * A column of a {@link ModelTable}: a level of a hierarchy of the cube.
+ * A column of a {@link ModelTable}: a level of a hierarchy of the cube, or a
+ * property of its members.
  *
  * @param table     the name of the table the column belongs to
  * @param name      the column name
@@ -26,8 +28,11 @@ import org.eclipse.daanse.dax.engine.api.DaxType;
  *                  {@code [Product].[Category]}
  * @param depth     the depth of the level within its hierarchy
  * @param type      the type of the values
+ * @param property  the name of the member property whose values the column
+ *                  has; empty for the names of the level's members
  */
-public record ModelColumn(String table, String name, String hierarchy, String level, int depth, DaxType type) {
+public record ModelColumn(String table, String name, String hierarchy, String level, int depth, DaxType type,
+        Optional<String> property) {
 
     public ModelColumn {
         Objects.requireNonNull(table, "table");
@@ -35,6 +40,12 @@ public record ModelColumn(String table, String name, String hierarchy, String le
         Objects.requireNonNull(hierarchy, "hierarchy");
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(property, "property");
+    }
+
+    /** A column of the names of the level's members. */
+    public ModelColumn(String table, String name, String hierarchy, String level, int depth, DaxType type) {
+        this(table, name, hierarchy, level, depth, type, Optional.empty());
     }
 
     /** @return the column name as DAX writes it, e.g. {@code Product[Category]} */

@@ -13,9 +13,11 @@
 package org.eclipse.daanse.dax.engine.impl.plan;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.daanse.dax.engine.api.DaxColumn;
 import org.eclipse.daanse.dax.engine.api.DaxType;
@@ -109,6 +111,53 @@ public record Summarize(List<ModelColumn> groupBy, List<NamedMeasure> measures, 
         List<NamedMeasure> all = new ArrayList<>(added);
         all.addAll(more);
         return new Summarize(groupBy, measures, condition, top, filters, all);
+    }
+
+    /**
+     * A property of the members of a level grouped by without the level or a
+     * deeper one of its hierarchy groups by its values, which no member of the
+     * cube has: with measures, a group of a value is a calculated member
+     * aggregating the members of the value.
+     *
+     * @return the hierarchies grouped by the values of their columns that way;
+     *         empty if the cube computes nothing for the groups but whether
+     *         one of their members has measures
+     */
+    public Set<String> byValues() {
+        boolean computes = !allMeasures().isEmpty() || top.isPresent()
+                || condition.filter(c -> !existsCondition(c)).isPresent();
+        Set<String> hierarchies = new LinkedHashSet<>();
+        if (computes) {
+            for (ModelColumn column : groupBy) {
+                if (withoutItsLevel(column, groupBy)) {
+                    hierarchies.add(column.hierarchy());
+                }
+            }
+        }
+        return hierarchies;
+    }
+
+    /**
+     * @return whether the column is a property grouped by without its level or
+     *         a deeper one of its hierarchy among the columns
+     */
+    public static boolean withoutItsLevel(ModelColumn column, List<ModelColumn> columns) {
+        return column.property().isPresent() && columns.stream().noneMatch(c -> c.property().isEmpty()
+                && c.hierarchy().equals(column.hierarchy()) && c.depth() >= column.depth());
+    }
+
+    /**
+     * @return whether the condition is {@code NOT ISBLANK} of measures joined by
+     *         {@code ||}: TRUE for a group if it is for one of its members
+     */
+    public static boolean existsCondition(ScalarPlan condition) {
+        return switch (condition) {
+        case ScalarPlan.Not not -> not.operand() instanceof ScalarPlan.IsBlank isBlank
+                && isBlank.operand() instanceof ScalarPlan.MeasureValue;
+        case ScalarPlan.Logical logical -> logical.operator() == LogicalOperator.OR
+                && existsCondition(logical.left()) && existsCondition(logical.right());
+        default -> false;
+        };
     }
 
     /** @return the measures and then the added measures, as the result columns after the groups */

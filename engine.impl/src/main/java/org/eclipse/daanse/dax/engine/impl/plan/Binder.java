@@ -81,14 +81,16 @@ import org.eclipse.daanse.dax.model.api.expression.VariableReference;
  * references, {@code DISTINCT} of a column or of a supported table,
  * {@code VALUES} of a column or a table name, {@code FILTER} of a supported
  * table by a condition on its columns and, computed by the cube, on measures,
- * {@code TOPN} of a supported table by its columns and measures, filter tables
+ * {@code TOPN} of a supported table by its columns and measures, {@code SAMPLE}
+ * of one by its columns, {@code SUMMARIZE} of a table, its {@code VALUES} or
+ * {@code DISTINCT} or a grouping by its columns and measures, filter tables
  * of {@code SUMMARIZECOLUMNS} of these, {@code KEEPFILTERS} of a filter table
  * or of the table {@code FILTER}, {@code TOPN} or {@code ADDCOLUMNS} iterates, e.g. of
  * {@code VALUES}, {@code ADDCOLUMNS} of a supported table by expressions of
  * its columns, or of measures computed by the cube, {@code CALCULATETABLE} of
  * a supported table by filter tables as of {@code SUMMARIZECOLUMNS} and by
  * conditions on the text of columns of one table, {@code GENERATE} of a
- * table as a filter table is and a grouping of other hierarchies or of deeper
+ * table as a filter table is and a grouping of other hierarchies or of
  * levels of its own, computed by the cube for each row, the comparisons, {@code IN} a table
  * constructor, {@code &&}, {@code ||}, {@code AND}, {@code OR}, {@code NOT} and {@code ISBLANK} of
  * constants and columns, {@code SUM}, {@code AVERAGE}, {@code MIN}, {@code MAX},
@@ -126,6 +128,7 @@ public final class Binder {
         List<EvaluatePlan> evaluates = new ArrayList<>();
         for (EvaluateStatement evaluate : statement.evaluateStatements()) {
             TablePlan table = table(evaluate.tableExpression());
+            checkProperties(table);
             evaluates.add(new EvaluatePlan(table, orderBy(evaluate.orderBy(), table.columns())));
         }
         return new QueryPlan(evaluates);
@@ -156,10 +159,12 @@ public final class Binder {
         case FunctionCall call -> switch (call.functionName().toUpperCase(Locale.ROOT)) {
             case "ROW" -> row(call.arguments());
             case "SUMMARIZECOLUMNS" -> summarizeColumns(call.arguments());
+            case "SUMMARIZE" -> summarizeTable(call.arguments());
             case "DISTINCT" -> distinct(call.arguments());
             case "VALUES" -> values(call.arguments());
             case "FILTER" -> filter(call.arguments());
             case "TOPN" -> topN(call.arguments());
+            case "SAMPLE" -> sample(call.arguments());
             case "ADDCOLUMNS" -> addColumns(call.arguments());
             case "CALCULATETABLE" -> calculateTable(call.arguments());
             case "GENERATE" -> generate(call.arguments());
@@ -266,6 +271,80 @@ public final class Binder {
      *         CALCULATETABLE; empty if it filters nothing, as all values of
      *         columns
      */
+    /**
+     * {@code SUMMARIZE} of a table, its {@code VALUES} or {@code DISTINCT}, or a
+     * grouping of columns: a grouping by its columns, the measures added, as they
+     * keep the groups where they are BLANK.
+     */
+    private TablePlan summarizeTable(List<DaxExpression> arguments) throws DaxSemanticException {
+        if (arguments.size() < 2) {
+            throw new DaxSemanticException("SUMMARIZE takes a table, columns and pairs of a name and an expression");
+        }
+        List<ModelColumn> source = summarizedColumns(withoutKeepFilters(arguments.get(0)));
+        List<ModelColumn> groupBy = new ArrayList<>();
+        int i = 1;
+        for (; i < arguments.size() && !(arguments.get(i) instanceof StringLiteral); i++) {
+            DaxExpression argument = arguments.get(i);
+            if (argument instanceof FunctionCall call && (call.functionName().equalsIgnoreCase("ROLLUP")
+                    || call.functionName().equalsIgnoreCase("ROLLUPGROUP"))) {
+                throw notSupported("SUMMARIZE with " + call.functionName().toUpperCase(Locale.ROOT));
+            }
+            if (!(argument instanceof Identifier identifier)) {
+                throw new DaxSemanticException("SUMMARIZE takes columns to group by, not an expression of kind "
+                        + kind(argument));
+            }
+            ModelColumn column = column(identifier);
+            if (!source.contains(column)) {
+                throw new DaxSemanticException("SUMMARIZE: the column " + column.daxName() + " is not of its table");
+            }
+            groupBy.add(column);
+        }
+        if ((arguments.size() - i) % 2 != 0) {
+            throw new DaxSemanticException("SUMMARIZE takes pairs of a name and an expression after its columns");
+        }
+        List<NamedMeasure> measures = new ArrayList<>();
+        Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (; i < arguments.size(); i += 2) {
+            String name = columnName(arguments.get(i), "SUMMARIZE");
+            if (!names.add(name)) {
+                throw new DaxSemanticException("SUMMARIZE: the column [" + name + "] exists already");
+            }
+            DaxExpression expression = arguments.get(i + 1);
+            ScalarPlan onCube = cubeExpression(expression, "SUMMARIZE")
+                    .orElseThrow(() -> notSupported("SUMMARIZE with an expression of kind " + kind(expression)
+                            + " of no measure"));
+            measures.add(new NamedMeasure(name, onCube));
+        }
+        Summarize summarize = (Summarize) summarize(groupBy, List.of());
+        return measures.isEmpty() ? summarize : summarize.withAdded(measures);
+    }
+
+    /** @return the columns of the table SUMMARIZE groups */
+    private List<ModelColumn> summarizedColumns(DaxExpression table) throws DaxSemanticException {
+        String name = switch (table) {
+        case Entity entity -> entity.name();
+        case Keyword keyword -> keyword.name();
+        case FunctionCall call when call.arguments().size() == 1
+                && List.of("VALUES", "DISTINCT").contains(call.functionName().toUpperCase(Locale.ROOT)) ->
+            switch (call.arguments().get(0)) {
+            case Entity entity -> entity.name();
+            case Keyword keyword -> keyword.name();
+            default -> null;
+            };
+        default -> null;
+        };
+        if (name != null) {
+            // its columns only: the table of several hierarchies is not computed
+            return model.table(name)
+                    .orElseThrow(() -> new DaxSemanticException("the table '" + name + "' does not exist")).columns();
+        }
+        if (table(table) instanceof Summarize summarize && summarize.allMeasures().isEmpty()
+                && summarize.condition().isEmpty() && summarize.top().isEmpty() && summarize.filters().isEmpty()) {
+            return summarize.groupBy();
+        }
+        throw notSupported("SUMMARIZE of a table other than a table, its VALUES or DISTINCT or a grouping of columns");
+    }
+
     private Optional<TablePlan> filterTable(DaxExpression argument, String function) throws DaxSemanticException {
         TablePlan table = table(withoutKeepFilters(argument));
         if (!filterTableOnCube(table)) {
@@ -362,6 +441,78 @@ public final class Binder {
                 || summarize.top().isPresent();
     }
 
+    /**
+     * A property of the members of a level grouped by without the level or a
+     * deeper one of its hierarchy has a row for each member: they are made
+     * distinct after the query. Measures for its values are computed by
+     * calculated members of the groups, see {@link Summarize#byValues()},
+     * which have no names or properties to filter on.
+     */
+    private static void checkProperties(TablePlan table) throws DaxSemanticException {
+        switch (table) {
+        case Summarize summarize -> checkByValues(summarize);
+        case Generate generate -> {
+            List<ModelColumn> columns = new ArrayList<>(Summarize.filterColumns(generate.outer()));
+            columns.addAll(generate.inner().groupBy());
+            Summarize inner = generate.inner();
+            boolean computes = !inner.allMeasures().isEmpty() || inner.top().isPresent()
+                    || inner.condition().filter(c -> !Summarize.existsCondition(c)).isPresent();
+            for (ModelColumn column : columns) {
+                if (computes && Summarize.withoutItsLevel(column, columns)) {
+                    throw notSupported("GENERATE computing measures by " + column.daxName()
+                            + ", a property, without its level");
+                }
+            }
+        }
+        case Filter filter -> checkProperties(filter.source());
+        case TopN topN -> checkProperties(topN.source());
+        case Sample sample -> checkProperties(sample.source());
+        case AddColumns addColumns -> checkProperties(addColumns.source());
+        case ConstantTable constant -> {
+        }
+        }
+    }
+
+    private static void checkByValues(Summarize summarize) throws DaxSemanticException {
+        Set<String> byValues = summarize.byValues();
+        if (byValues.isEmpty()) {
+            return;
+        }
+        Set<Integer> grouped = new TreeSet<>();
+        for (int i = 0; i < summarize.groupBy().size(); i++) {
+            ModelColumn column = summarize.groupBy().get(i);
+            if (byValues.contains(column.hierarchy())) {
+                grouped.add(i);
+            }
+        }
+        if (summarize.condition().isPresent() && usesColumns(summarize.condition().get(), grouped)) {
+            throw notSupported("a condition by measures on the columns of " + String.join(", ", byValues)
+                    + ", grouped by the values of a property without its level");
+        }
+        for (TablePlan filter : summarize.filters()) {
+            for (ModelColumn column : Summarize.filterColumns(filter)) {
+                if (byValues.contains(column.hierarchy())) {
+                    throw notSupported("a filter table on " + column.daxName()
+                            + ", grouped by the values of a property without its level");
+                }
+            }
+        }
+    }
+
+    /** @return whether the plan refers to one of the columns */
+    private static boolean usesColumns(ScalarPlan plan, Set<Integer> columns) {
+        return switch (plan) {
+        case ColumnValue column -> columns.contains(column.column());
+        case InList in -> usesColumns(in.value(), columns);
+        case Comparison comparison -> usesColumns(comparison.left(), columns)
+                || usesColumns(comparison.right(), columns);
+        case Logical logical -> usesColumns(logical.left(), columns) || usesColumns(logical.right(), columns);
+        case Not not -> usesColumns(not.operand(), columns);
+        case IsBlank isBlank -> usesColumns(isBlank.operand(), columns);
+        default -> false;
+        };
+    }
+
     /** @return whether a filter table, see {@link Summarize#filters()}, keeps rows by a measure */
     private static boolean filtersByMeasure(TablePlan filter) {
         return switch (filter) {
@@ -387,15 +538,7 @@ public final class Binder {
             throw notSupported("GENERATE with a second table other than a grouping of columns and measures, "
                     + "e.g. VALUES, TOPN or FILTER by a measure, SUMMARIZECOLUMNS without filter tables or ROW");
         }
-        Map<String, Integer> depths = new TreeMap<>();
-        Summarize.filterColumns(outer).forEach(c -> depths.merge(c.hierarchy(), c.depth(), Math::max));
-        for (ModelColumn column : summarize.groupBy()) {
-            // a deeper level of an outer hierarchy: its members under the outer one
-            if (depths.containsKey(column.hierarchy()) && column.depth() <= depths.get(column.hierarchy())) {
-                throw notSupported("GENERATE of a second table with " + column.daxName()
-                        + ", not deeper than the first table's columns of its hierarchy");
-            }
-        }
+        // a level of an outer hierarchy: its members under the outer one, or the outer one's ancestor
         Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         for (DaxColumn column : outer.columns()) {
             names.add(column.name());
@@ -532,6 +675,7 @@ public final class Binder {
         // the rows are computed as before, of the filtered source
         case Filter filter -> new Filter(calculated(filter.source(), filters), filter.condition());
         case TopN topN -> new TopN(calculated(topN.source(), filters), topN.count(), topN.keys());
+        case Sample sample -> new Sample(calculated(sample.source(), filters), sample.count(), sample.keys());
         case AddColumns addColumns ->
             new AddColumns(calculated(addColumns.source(), filters), addColumns.width(), addColumns.added());
         // constants are not filtered
@@ -576,6 +720,7 @@ public final class Binder {
         // so has a filtered one: only a grouping is filtered after binding
         case Filter filter -> filter;
         case TopN topN -> topN;
+        case Sample sample -> sample;
         // added columns depend on the rest of the row
         case AddColumns addColumns -> addColumns;
         // as MDX Generate gives each tuple once
@@ -649,6 +794,7 @@ public final class Binder {
         case AddColumns addColumns ->
             new AddColumns(filteredByCube(addColumns.source(), condition), addColumns.width(), addColumns.added());
         case TopN topN -> throw notSupported("FILTER of TOPN by a measure");
+        case Sample sample -> throw notSupported("FILTER of SAMPLE by a measure");
         case ConstantTable constant -> throw notSupported("FILTER of a table constructor by a measure");
         case Generate generate -> throw notSupported("FILTER of GENERATE by a measure");
         };
@@ -760,6 +906,7 @@ public final class Binder {
         // the columns are added after those the filter and the order refer to
         case Filter filter -> new Filter(withAdded(filter.source(), measures), filter.condition());
         case TopN topN -> new TopN(withAdded(topN.source(), measures), topN.count(), topN.keys());
+        case Sample sample -> new Sample(withAdded(sample.source(), measures), sample.count(), sample.keys());
         case AddColumns addColumns -> throw notSupported("ADDCOLUMNS by a measure of ADDCOLUMNS computing columns");
         case ConstantTable constant -> throw notSupported("ADDCOLUMNS of a table constructor by a measure");
         // computed for the rows as the inner measures are
@@ -782,7 +929,37 @@ public final class Binder {
         };
     }
 
-    /** @return whether the argument is an order of TOPN: ASC, DESC, TRUE, FALSE, 0 or 1 */
+    private TablePlan sample(List<DaxExpression> arguments) throws DaxSemanticException {
+        if (arguments.size() < 3) {
+            throw new DaxSemanticException("SAMPLE takes a number of rows, a table and expressions to order by");
+        }
+        if (!(constant(arguments.get(0)) instanceof Number count)) {
+            throw new DaxSemanticException("SAMPLE takes a number of rows");
+        }
+        TablePlan source = table(withoutKeepFilters(arguments.get(1)));
+        List<SortKey> keys = new ArrayList<>();
+        for (int i = 2; i < arguments.size(); i++) {
+            DaxExpression expression = arguments.get(i);
+            // ascending unless told
+            boolean ascending = true;
+            if (i + 1 < arguments.size() && isOrder(arguments.get(i + 1))) {
+                ascending = ascending(arguments.get(++i));
+            }
+            switch (scalar(expression, source.columns())) {
+            case ColumnValue column -> keys.add(new SortKey(column.column(), ascending));
+            case MeasureValue measure -> throw notSupported("SAMPLE by a measure");
+            default -> throw notSupported("SAMPLE by an expression of kind " + kind(expression));
+            }
+        }
+        Sample sample = new Sample(source, count.longValue(), keys);
+        if (source instanceof ConstantTable constant) {
+            // nothing to query: computed right away
+            return new ConstantTable(sample.columns(), sample.apply(constant.rows()));
+        }
+        return sample;
+    }
+
+    /** @return whether the argument is an order of TOPN or SAMPLE: ASC, DESC, TRUE, FALSE, 0 or 1 */
     private static boolean isOrder(DaxExpression argument) {
         return switch (argument) {
         case Keyword keyword -> List.of("ASC", "DESC", "TRUE", "FALSE").contains(keyword.name().toUpperCase(Locale.ROOT));
@@ -883,6 +1060,7 @@ public final class Binder {
         // these keep the first columns of their source
         case Filter filter -> groupedColumns(filter.source());
         case TopN topN -> groupedColumns(topN.source());
+        case Sample sample -> groupedColumns(sample.source());
         case AddColumns addColumns -> Math.min(addColumns.width(), groupedColumns(addColumns.source()));
         case ConstantTable constant -> 0;
         case Generate generate -> 0;

@@ -13,6 +13,7 @@
 package org.eclipse.daanse.dax.engine.impl.mdx;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.eclipse.daanse.dax.engine.impl.TestModel.CATEGORY;
 import static org.eclipse.daanse.dax.engine.impl.TestModel.MARKETS;
 import static org.eclipse.daanse.dax.engine.impl.TestModel.SALES;
@@ -21,17 +22,23 @@ import static org.eclipse.daanse.dax.engine.impl.TestModel.SUBCATEGORY;
 import static org.eclipse.daanse.dax.engine.impl.TestModel.UNIT_SALES;
 import static org.eclipse.daanse.dax.engine.impl.TestModel.YEAR;
 
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import org.eclipse.daanse.dax.engine.api.DaxSemanticException;
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.TestModel;
 import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
+import org.eclipse.daanse.dax.engine.impl.model.ModelMeasure;
 import org.eclipse.daanse.dax.engine.impl.model.ModelTable;
 import org.eclipse.daanse.dax.engine.impl.model.TabularModel;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.CellValue;
+import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.GroupValue;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.MemberName;
+import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource.MemberProperty;
 import org.eclipse.daanse.dax.engine.impl.plan.Binder;
 import org.eclipse.daanse.dax.engine.impl.plan.Generate;
 import org.eclipse.daanse.dax.engine.impl.plan.NamedMeasure;
@@ -215,6 +222,12 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void summarizeKeepsTheGroupsWhereItsMeasuresAreBlank() throws Exception {
+        assertThat(mdx("EVALUATE SUMMARIZE('Markets', 'Markets'[Country], \"S\", [Sales])"))
+                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, [Markets].[Country].Members ON ROWS FROM [C]");
+    }
+
+    @Test
     void conditionOfSeveralParts() {
         ScalarPlan condition = new Logical(LogicalOperator.OR,
                 new Not(new IsBlank(new MeasureValue(UNIT_SALES))),
@@ -376,5 +389,215 @@ class MdxGeneratorTest {
                 + "CrossJoin({[Date].CurrentMember}, Descendants([Product].CurrentMember, [Product].[Subcategory]))), "
                 + "CrossJoin({[Date].CurrentMember}, Filter(Descendants([Product].CurrentMember, [Product].[Name]), "
                 + "NOT IsEmpty([Measures].[Sales]))))");
+    }
+
+    @Test
+    void generatesOfLevelsNotDeeperTakeTheAncestorOfTheOuterMember() throws Exception {
+        ModelColumn birthDate = customer("BirthDate", 1);
+        ModelColumn addressLine1 = customer("AddressLine1", 2);
+        ModelColumn addressLine2 = customer("AddressLine2", 3);
+        ModelColumn commuteDistance = customer("CommuteDistance", 4);
+        ModelMeasure sales = new ModelMeasure("FactInternetSales", "[Measures].[FactInternetSales]");
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("DimCustomer",
+                List.of(birthDate, addressLine1, addressLine2, commuteDistance))), List.of(sales));
+        QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(ROW("S", 'Measures'[FactInternetSales]),
+                    KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(GENERATE(
+                            KEEPFILTERS(GENERATE(
+                                KEEPFILTERS(VALUES('DimCustomer'[DimCustomer.DimCustomer.AddressLine1])),
+                                VALUES('DimCustomer'[DimCustomer.DimCustomer.AddressLine2]))),
+                            VALUES('DimCustomer'[DimCustomer.DimCustomer.BirthDate]))),
+                        FILTER(KEEPFILTERS(VALUES('DimCustomer'[DimCustomer.DimCustomer.CommuteDistance])),
+                            NOT(ISBLANK('Measures'[FactInternetSales]))))))
+                """).parseDaxStatement());
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[FactInternetSales]} ON COLUMNS FROM [C] WHERE "
+                + "Generate(Generate(Generate([DimCustomer].[DimCustomer].[AddressLine1].Members, "
+                + "Descendants([DimCustomer].[DimCustomer].CurrentMember, [DimCustomer].[DimCustomer].[AddressLine2])), "
+                + "{[DimCustomer].[DimCustomer].CurrentMember}), "
+                + "Filter(Descendants([DimCustomer].[DimCustomer].CurrentMember, "
+                + "[DimCustomer].[DimCustomer].[CommuteDistance]), NOT IsEmpty([Measures].[FactInternetSales])))");
+    }
+
+    @Test
+    void generateOfAShallowerLevelReadsItFromTheAncestor() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider()
+                .newParser("EVALUATE GENERATE(VALUES('Product'[Subcategory]), "
+                        + "FILTER(VALUES('Product'[Category]), 'Product'[Category] = \"Bikes\" || [Sales] > 1))")
+                .parseDaxStatement());
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {} ON COLUMNS, Generate([Product].[Subcategory].Members, "
+                + "Filter({[Product].CurrentMember}, (UCase(Ancestor([Product].CurrentMember, [Product].[Category]).Name) "
+                + "= \"BIKES\") OR ([Measures].[Sales] > 1))) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 2), new MemberName(0, 1));
+    }
+
+    private static ModelColumn customer(String level, int depth) {
+        return new ModelColumn("DimCustomer", "DimCustomer.DimCustomer." + level, "[DimCustomer].[DimCustomer]",
+                "[DimCustomer].[DimCustomer].[" + level + "]", depth, DaxType.STRING);
+    }
+
+    /** Customers: City with the property Population, Name with Gender; and Date */
+    private static TabularModel customers() {
+        ModelColumn city = new ModelColumn("Customers", "Customers.Customers.City", "[Customers].[Customers]",
+                "[Customers].[Customers].[City]", 1, DaxType.STRING);
+        ModelColumn name = new ModelColumn("Customers", "Customers.Customers.Name", "[Customers].[Customers]",
+                "[Customers].[Customers].[Name]", 2, DaxType.STRING);
+        return new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(city,
+                new ModelColumn("Customers", "Customers.Customers.City.Population", city.hierarchy(), city.level(), 1,
+                        DaxType.STRING, Optional.of("Population")),
+                name, new ModelColumn("Customers", "Customers.Customers.Name.Gender", name.hierarchy(), name.level(), 2,
+                        DaxType.STRING, Optional.of("Gender")))),
+                new ModelTable("Date", List.of(YEAR))), List.of(SALES));
+    }
+
+    private static QueryPlan bindCustomers(String dax) throws Exception {
+        return new Binder(customers(), Map.of()).bind(new CCCDaxParserProvider().newParser(dax).parseDaxStatement());
+    }
+
+    @Test
+    void propertiesAreReadFromTheMembersOfTheirLevel() throws Exception {
+        QueryPlan plan = bindCustomers("EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.Name], "
+                + "'Customers'[Customers.Customers.Name.Gender], 'Customers'[Customers.Customers.City.Population], \"S\", [Sales])");
+        MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, "
+                + "NON EMPTY [Customers].[Customers].[Name].Members ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 2), new MemberProperty(0, 2, "Gender", DaxType.STRING),
+                new MemberProperty(0, 1, "Population", DaxType.STRING), new CellValue(0));
+    }
+
+    @Test
+    void conditionsOnPropertiesCompareTheirValues() throws Exception {
+        QueryPlan plan = bindCustomers("EVALUATE SUMMARIZECOLUMNS('Date'[Year], "
+                + "KEEPFILTERS(FILTER(VALUES('Customers'[Customers.Customers.Name.Gender]), "
+                + "'Customers'[Customers.Customers.Name.Gender] = \"f\")), \"S\", [Sales])");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C] "
+                        + "WHERE Filter([Customers].[Customers].[Name].Members, "
+                        + "UCase([Customers].[Customers].CurrentMember.Properties(\"Gender\")) = \"F\")");
+        plan = bindCustomers("EVALUATE GENERATE(VALUES('Customers'[Customers.Customers.Name]), "
+                + "FILTER(VALUES('Customers'[Customers.Customers.City.Population]), "
+                + "'Customers'[Customers.Customers.City.Population] = \"1000\" || [Sales] > 1))");
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table());
+        assertThat(query.text()).isEqualTo("SELECT {} ON COLUMNS, Generate([Customers].[Customers].[Name].Members, "
+                + "Filter({[Customers].[Customers].CurrentMember}, (UCase(Ancestor([Customers].[Customers].CurrentMember, "
+                + "[Customers].[Customers].[City]).Properties(\"Population\")) = \"1000\") OR ([Measures].[Sales] > 1))) "
+                + "ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 2), new MemberProperty(0, 1, "Population", DaxType.STRING));
+    }
+
+    @Test
+    void propertyWithoutItsLevelWithoutMeasuresIsReadFromItsMembers() throws Exception {
+        QueryPlan plan = bindCustomers("EVALUATE FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name.Gender])), "
+                + "NOT(ISBLANK([Sales])))");
+        Summarize summarize = (Summarize) plan.evaluates().get(0).table();
+        // whether one of the members of a value has measures needs no groups
+        assertThat(summarize.byValues()).isEmpty();
+        MdxQuery query = MdxGenerator.summarize("[C]", summarize);
+        assertThat(query.text()).isEqualTo("SELECT {} ON COLUMNS, Filter([Customers].[Customers].[Name].Members, "
+                + "NOT IsEmpty([Measures].[Sales])) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberProperty(0, 2, "Gender", DaxType.STRING));
+        // grouped by a deeper level, a property of an ancestor has its own measures
+        plan = bindCustomers("EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.City.Population], "
+                + "'Customers'[Customers.Customers.Name], \"S\", [Sales])");
+        assertThat(((Summarize) plan.evaluates().get(0).table()).byValues()).isEmpty();
+    }
+
+    @Test
+    void groupsOfPropertyValuesAreCalculatedMembers() throws Exception {
+        QueryPlan plan = bindCustomers("""
+                EVALUATE TOPN(501, ADDCOLUMNS(KEEPFILTERS(FILTER(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name.Gender])), NOT(ISBLANK('Measures'[Sales])))),
+                    "S", 'Measures'[Sales]), 'Customers'[Customers.Customers.Name.Gender], 1)
+                ORDER BY 'Customers'[Customers.Customers.Name.Gender]""");
+        Summarize summarize = (Summarize) ((TopN) plan.evaluates().get(0).table()).source();
+        assertThat(summarize.byValues()).containsExactly("[Customers].[Customers]");
+
+        MdxQuery query = MdxGenerator.summarize("[C]", summarize, Map.of("[Customers].[Customers]",
+                List.of(List.of("F"), List.of("M"), Arrays.asList((Object) null))));
+        String gender = "[Customers].[Customers].CurrentMember.Properties(\"Gender\")";
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Customers].[Customers].[DAX group 1] AS Aggregate(Filter("
+                + "[Customers].[Customers].[Name].Members, " + gender + " = \"F\")) "
+                + "MEMBER [Customers].[Customers].[DAX group 2] AS Aggregate(Filter("
+                + "[Customers].[Customers].[Name].Members, " + gender + " = \"M\")) "
+                + "MEMBER [Customers].[Customers].[DAX group 3] AS Aggregate(Filter("
+                + "[Customers].[Customers].[Name].Members, IsEmpty(" + gender + "))) "
+                + "SELECT {[Measures].[Sales]} ON COLUMNS, Filter({[Customers].[Customers].[DAX group 1], "
+                + "[Customers].[Customers].[DAX group 2], [Customers].[Customers].[DAX group 3]}, "
+                + "NOT IsEmpty([Measures].[Sales])) ON ROWS FROM [C]");
+        Map<String, Object> values = new HashMap<>();
+        values.put("DAX group 1", "F");
+        values.put("DAX group 2", "M");
+        values.put("DAX group 3", null);
+        assertThat(query.sources()).containsExactly(new GroupValue(0, values), new CellValue(0));
+    }
+
+    @Test
+    void groupsOfValuesOfAPropertyAndAShallowerLevelBesideOtherHierarchies() throws Exception {
+        QueryPlan plan = bindCustomers("EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.City], "
+                + "'Customers'[Customers.Customers.Name.Gender], 'Date'[Year], \"S\", [Sales], \"E\", ISBLANK([Sales]))");
+        Summarize summarize = (Summarize) plan.evaluates().get(0).table();
+        MdxQuery query = MdxGenerator.summarize("[C]", summarize,
+                Map.of("[Customers].[Customers]", List.of(List.of("Paris", "F"))));
+        // the measures of the cube aggregate over the group; a calculated one is computed after
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Customers].[Customers].[DAX group 1] AS Aggregate(Filter("
+                + "[Customers].[Customers].[Name].Members, (Ancestor([Customers].[Customers].CurrentMember, "
+                + "[Customers].[Customers].[City]).Name = \"Paris\") AND "
+                + "([Customers].[Customers].CurrentMember.Properties(\"Gender\") = \"F\"))) "
+                + "MEMBER [Measures].[DAX E] AS IsEmpty([Measures].[Sales]), SOLVE_ORDER = 1 "
+                + "SELECT {[Measures].[Sales], [Measures].[DAX E]} ON COLUMNS, NON EMPTY "
+                + "CrossJoin({[Customers].[Customers].[DAX group 1]}, [Date].[Year].Members) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new GroupValue(0, Map.of("DAX group 1", "Paris")),
+                new GroupValue(0, Map.of("DAX group 1", "F")), new MemberName(1, 1), new CellValue(0),
+                new CellValue(1));
+    }
+
+    @Test
+    void groupsOfNumericPropertyValuesCompareNumbers() throws Exception {
+        ModelColumn store = new ModelColumn("Store", "Store.Store.Store Name", "[Store].[Store]",
+                "[Store].[Store].[Store Name]", 4, DaxType.STRING);
+        ModelColumn meat = new ModelColumn("Store", "Store.Store.Store Name.Meat Sqft", "[Store].[Store]",
+                "[Store].[Store].[Store Name]", 4, DaxType.INTEGER, Optional.of("Meat Sqft"));
+        TabularModel model = new TabularModel("[Store]", List.of(new ModelTable("Store", List.of(store, meat))),
+                List.of(new ModelMeasure("Store Sqft", "[Measures].[Store Sqft]")));
+        QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE TOPN(501, ADDCOLUMNS(KEEPFILTERS(FILTER(
+                        KEEPFILTERS(VALUES('Store'[Store.Store.Store Name.Meat Sqft])),
+                        NOT(ISBLANK('Measures'[Store Sqft])))), "S", 'Measures'[Store Sqft]),
+                    'Store'[Store.Store.Store Name.Meat Sqft], 1)""").parseDaxStatement());
+        Summarize summarize = (Summarize) ((TopN) plan.evaluates().get(0).table()).source();
+        MdxQuery query = MdxGenerator.summarize("[Store]", summarize,
+                Map.of("[Store].[Store]", List.of(List.of(2678L), Arrays.asList((Object) null))));
+        String meatSqft = "[Store].[Store].CurrentMember.Properties(\"Meat Sqft\")";
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Store].[Store].[DAX group 1] AS Aggregate(Filter("
+                + "[Store].[Store].[Store Name].Members, " + meatSqft + " = 2678)) "
+                + "MEMBER [Store].[Store].[DAX group 2] AS Aggregate(Filter("
+                + "[Store].[Store].[Store Name].Members, IsEmpty(" + meatSqft + "))) "
+                + "SELECT {[Measures].[Store Sqft]} ON COLUMNS, Filter({[Store].[Store].[DAX group 1], "
+                + "[Store].[Store].[DAX group 2]}, NOT IsEmpty([Measures].[Store Sqft])) ON ROWS FROM [Store]");
+        assertThat(plan.evaluates().get(0).table().columns()).extracting(c -> c.type())
+                .containsExactly(DaxType.INTEGER, DaxType.VARIANT);
+    }
+
+    @Test
+    void groupsOfPropertyValuesHaveNoNamesToFilterOn() throws Exception {
+        for (String[] dax : new String[][] {
+                { "EVALUATE FILTER(VALUES('Customers'[Customers.Customers.Name.Gender]), "
+                        + "'Customers'[Customers.Customers.Name.Gender] = \"F\" || [Sales] > 1)",
+                        "a condition by measures on the columns of [Customers].[Customers], grouped by the values "
+                                + "of a property without its level is not supported yet" },
+                { "EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.Name.Gender], "
+                        + "KEEPFILTERS(FILTER(VALUES('Customers'[Customers.Customers.City]), "
+                        + "'Customers'[Customers.Customers.City] = \"Paris\")), \"S\", [Sales])",
+                        "a filter table on Customers[Customers.Customers.City], grouped by the values of a property "
+                                + "without its level is not supported yet" },
+                { "EVALUATE GENERATE(VALUES('Date'[Year]), "
+                        + "SUMMARIZECOLUMNS('Customers'[Customers.Customers.Name.Gender], \"S\", [Sales]))",
+                        "GENERATE computing measures by Customers[Customers.Customers.Name.Gender], a property, "
+                                + "without its level is not supported yet" } }) {
+            assertThatThrownBy(() -> bindCustomers(dax[0])).isInstanceOf(DaxSemanticException.class)
+                    .hasMessage(dax[1]);
+        }
     }
 }

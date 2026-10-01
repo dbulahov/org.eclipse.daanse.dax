@@ -12,8 +12,13 @@
  */
 package org.eclipse.daanse.dax.engine.impl.mdx;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+
+import org.eclipse.daanse.dax.engine.api.DaxType;
 
 /**
  * An MDX query computing a table, and where each column of the table is found
@@ -42,6 +47,33 @@ public record MdxQuery(String text, List<ValueSource> sources, boolean rows) {
          * @param depth  the depth of the ancestor's level
          */
         record MemberName(int member, int depth) implements ValueSource {
+        }
+
+        /**
+         * The value of a property of the ancestor, at the given depth, of a
+         * member of the rows axis.
+         *
+         * @param member   the index of the member in a position of the rows axis
+         * @param depth    the depth of the ancestor's level
+         * @param property the name of the property
+         * @param type     the type of the column the value is of
+         */
+        record MemberProperty(int member, int depth, String property, DaxType type) implements ValueSource {
+        }
+
+        /**
+         * The value of a column for the calculated member of the rows axis
+         * computing its group.
+         *
+         * @param member the index of the member in a position of the rows axis
+         * @param values the value of each group, by the name of its member;
+         *               {@code null} for BLANK
+         */
+        record GroupValue(int member, Map<String, Object> values) implements ValueSource {
+
+            public GroupValue {
+                values = Collections.unmodifiableMap(new HashMap<>(values));
+            }
         }
 
         /**

@@ -14,6 +14,7 @@ package org.eclipse.daanse.dax.engine.impl.model;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxNames;
@@ -23,6 +24,7 @@ import org.eclipse.daanse.olap.api.element.Dimension;
 import org.eclipse.daanse.olap.api.element.Hierarchy;
 import org.eclipse.daanse.olap.api.element.Level;
 import org.eclipse.daanse.olap.api.element.Member;
+import org.eclipse.daanse.olap.api.element.Property;
 
 /**
  * Builds the {@link TabularModel} of a cube, as a role sees it.
@@ -30,8 +32,12 @@ import org.eclipse.daanse.olap.api.element.Member;
  * Every visible dimension but the measures becomes a table, every visible
  * level but the all level a column. A column is named by its dimension,
  * hierarchy and level, e.g. {@code Product.ProductHierarchy.Category}, as
- * queries refer to it. Column values are member names, so every column
- * is of type {@link DaxType#STRING}.
+ * queries refer to it. Every property of the members of a level, but the
+ * internal ones, is a column too, after it, named by the level and the
+ * property, e.g. {@code Customers.Customers.Name.Gender}, as CSDL refers to it.
+ * The values of a level's column are member names, of type
+ * {@link DaxType#STRING}; those of a property's column are of the
+ * property's type, as MDX gives them.
  * </p>
  */
 public final class TabularModelBuilder {
@@ -77,8 +83,31 @@ public final class TabularModelBuilder {
                 String name = table + "." + hierarchy.getName() + "." + level.getName();
                 columns.add(new ModelColumn(table, name, hierarchy.getUniqueName(), level.getUniqueName(),
                         level.getDepth(), DaxType.STRING));
+                for (Property property : level.getProperties()) {
+                    if (property.isInternal() || property.getName().startsWith("$")) {
+                        continue;
+                    }
+                    // named as CSDL refers to it: the level's unique name without brackets, then the property
+                    String propertyName = withoutBrackets(level.getUniqueName()) + "." + property.getName();
+                    columns.add(new ModelColumn(table, propertyName, hierarchy.getUniqueName(), level.getUniqueName(),
+                            level.getDepth(), type(property.getType()), Optional.of(property.getName())));
+                }
             }
         }
         return new ModelTable(table, columns);
+    }
+
+    private static DaxType type(Property.Datatype type) {
+        return switch (type) {
+        case TYPE_INTEGER, TYPE_LONG -> DaxType.INTEGER;
+        case TYPE_NUMERIC -> DaxType.DOUBLE;
+        case TYPE_BOOLEAN -> DaxType.BOOLEAN;
+        case TYPE_DATE, TYPE_TIME, TYPE_TIMESTAMP -> DaxType.DATETIME;
+        case TYPE_STRING, TYPE_OTHER -> DaxType.STRING;
+        };
+    }
+
+    private static String withoutBrackets(String uniqueName) {
+        return uniqueName.replace("[", "").replace("]", "");
     }
 }
