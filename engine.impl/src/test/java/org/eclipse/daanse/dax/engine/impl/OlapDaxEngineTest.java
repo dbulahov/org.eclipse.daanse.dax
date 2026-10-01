@@ -21,6 +21,7 @@ import static org.eclipse.daanse.dax.engine.impl.OlapMocks.hierarchy;
 import static org.eclipse.daanse.dax.engine.impl.OlapMocks.level;
 import static org.eclipse.daanse.dax.engine.impl.OlapMocks.measure;
 import static org.eclipse.daanse.dax.engine.impl.OlapMocks.member;
+import static org.eclipse.daanse.dax.engine.impl.OlapMocks.property;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -50,6 +51,7 @@ import org.eclipse.daanse.olap.api.element.Dimension;
 import org.eclipse.daanse.olap.api.element.Hierarchy;
 import org.eclipse.daanse.olap.api.element.Level;
 import org.eclipse.daanse.olap.api.element.Member;
+import org.eclipse.daanse.olap.api.element.Property;
 import org.eclipse.daanse.olap.api.execution.Statement;
 import org.eclipse.daanse.olap.api.result.CellSet;
 import org.junit.jupiter.api.AfterEach;
@@ -129,6 +131,106 @@ class OlapDaxEngineTest {
             assertThat(result.nextTable()).isNull();
         }
         verify(olapStatement).close();
+    }
+
+    @Test
+    void readsLevelPropertiesAndMakesTheirValuesDistinct() throws Exception {
+        Property[] properties = { property("Color", false) };
+        when(subcategory.getProperties()).thenReturn(properties);
+        Member bikes = member("Bikes", category, null);
+        Member clothes = member("Clothes", category, null);
+        Member road = member("Road", subcategory, bikes);
+        Member mountain = member("Mountain", subcategory, bikes);
+        Member caps = member("Caps", subcategory, clothes);
+        when(road.getPropertyValue("Color")).thenReturn("Red");
+        when(mountain.getPropertyValue("Color")).thenReturn("Red");
+        when(caps.getPropertyValue("Color")).thenReturn("Blue");
+        CellSet cellSet = cellSet(List.of(List.of(road), List.of(mountain), List.of(caps)),
+                new Object[][] { {}, {}, {} });
+        when(olapStatement.executeQuery("SELECT {} ON COLUMNS, Filter([Product].[ProductHierarchy].[Subcategory].Members, "
+                + "NOT IsEmpty([Measures].[Sales Amount])) ON ROWS FROM [Sales]")).thenReturn(cellSet);
+
+        try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
+                DaxResult result = statement.execute("""
+                        EVALUATE FILTER(KEEPFILTERS(VALUES('Product'[Product.ProductHierarchy.Subcategory.Color])),
+                            NOT(ISBLANK('Measures'[Sales Amount])))
+                        ORDER BY 'Product'[Product.ProductHierarchy.Subcategory.Color]
+                        """)) {
+            DaxTable table = result.nextTable();
+            assertThat(table.columns()).extracting(DaxColumn::name)
+                    .containsExactly("Product[Product.ProductHierarchy.Subcategory.Color]");
+            assertThat(rows(table)).containsExactly(List.of("Blue"), List.of("Red"));
+        }
+    }
+
+    @Test
+    void computesMeasuresByPropertyValuesOverTheirMembers() throws Exception {
+        Property[] properties = { property("Color", false) };
+        when(subcategory.getProperties()).thenReturn(properties);
+        Member bikes = member("Bikes", category, null);
+        Member clothes = member("Clothes", category, null);
+        Member road = member("Road", subcategory, bikes);
+        Member mountain = member("Mountain", subcategory, bikes);
+        Member caps = member("Caps", subcategory, clothes);
+        when(road.getPropertyValue("Color")).thenReturn("Red");
+        when(mountain.getPropertyValue("Color")).thenReturn("Red");
+        when(caps.getPropertyValue("Color")).thenReturn("Blue");
+        CellSet values = cellSet(List.of(List.of(road), List.of(mountain), List.of(caps)),
+                new Object[][] { {}, {}, {} });
+        when(olapStatement.executeQuery(
+                "SELECT {} ON COLUMNS, [Product].[ProductHierarchy].[Subcategory].Members ON ROWS FROM [Sales]"))
+                .thenReturn(values);
+        Member red = member("DAX group 1", subcategory, null);
+        Member blue = member("DAX group 2", subcategory, null);
+        CellSet groups = cellSet(List.of(List.of(red), List.of(blue)), new Object[][] { { 40.0 }, { 20.5 } });
+        String color = "[Product].[ProductHierarchy].CurrentMember.Properties(\"Color\")";
+        when(olapStatement.executeQuery("WITH MEMBER [Product].[ProductHierarchy].[DAX group 1] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, " + color + " = \"Red\")) "
+                + "MEMBER [Product].[ProductHierarchy].[DAX group 2] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, " + color + " = \"Blue\")) "
+                + "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY {[Product].[ProductHierarchy].[DAX group 1], "
+                + "[Product].[ProductHierarchy].[DAX group 2]} ON ROWS FROM [Sales]")).thenReturn(groups);
+
+        try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
+                DaxResult result = statement.execute("""
+                        EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Subcategory.Color],
+                            "S", [Sales Amount])
+                        ORDER BY 'Product'[Product.ProductHierarchy.Subcategory.Color]
+                        """)) {
+            assertThat(rows(result.nextTable())).containsExactly(List.of("Blue", 20.5), List.of("Red", 40.0));
+        }
+    }
+
+    @Test
+    void groupsByNumericPropertyValuesOfTheirType() throws Exception {
+        Property[] properties = { property("Sqft", false, Property.Datatype.TYPE_INTEGER) };
+        when(subcategory.getProperties()).thenReturn(properties);
+        Member bikes = member("Bikes", category, null);
+        Member road = member("Road", subcategory, bikes);
+        Member mountain = member("Mountain", subcategory, bikes);
+        when(road.getPropertyValue("Sqft")).thenReturn(2678);
+        when(mountain.getPropertyValue("Sqft")).thenReturn(5624);
+        CellSet values = cellSet(List.of(List.of(road), List.of(mountain)), new Object[][] { {}, {} });
+        when(olapStatement.executeQuery(
+                "SELECT {} ON COLUMNS, [Product].[ProductHierarchy].[Subcategory].Members ON ROWS FROM [Sales]"))
+                .thenReturn(values);
+        CellSet groups = cellSet(List.of(List.of(member("DAX group 1", subcategory, null)),
+                List.of(member("DAX group 2", subcategory, null))), new Object[][] { { 40.0 }, { 20.5 } });
+        String sqft = "[Product].[ProductHierarchy].CurrentMember.Properties(\"Sqft\")";
+        when(olapStatement.executeQuery("WITH MEMBER [Product].[ProductHierarchy].[DAX group 1] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, " + sqft + " = 2678)) "
+                + "MEMBER [Product].[ProductHierarchy].[DAX group 2] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, " + sqft + " = 5624)) "
+                + "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY {[Product].[ProductHierarchy].[DAX group 1], "
+                + "[Product].[ProductHierarchy].[DAX group 2]} ON ROWS FROM [Sales]")).thenReturn(groups);
+
+        try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
+                DaxResult result = statement.execute("""
+                        EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Subcategory.Sqft],
+                            "S", [Sales Amount])
+                        """)) {
+            assertThat(rows(result.nextTable())).containsExactly(List.of(2678L, 40.0), List.of(5624L, 20.5));
+        }
     }
 
     @Test

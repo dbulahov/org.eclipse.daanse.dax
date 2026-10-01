@@ -21,6 +21,7 @@ import java.util.Date;
 import java.util.List;
 
 import org.eclipse.daanse.dax.engine.api.DaxExecutionException;
+import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.mdx.MdxQuery.ValueSource;
 import org.eclipse.daanse.olap.api.element.Member;
 import org.eclipse.daanse.olap.api.result.Cell;
@@ -62,6 +63,10 @@ public final class CellSetReader {
             for (ValueSource source : query.sources()) {
                 row.add(switch (source) {
                 case ValueSource.MemberName name -> memberName(members.get(name.member()), name.depth());
+                case ValueSource.MemberProperty property ->
+                    propertyValue(members.get(property.member()), property.depth(), property.property(),
+                            property.type());
+                case ValueSource.GroupValue group -> group.values().get(members.get(group.member()).getName());
                 case ValueSource.CellValue cell -> cellValue(cellSet.getCell(List.of(cell.column(), r)));
                 });
             }
@@ -71,11 +76,29 @@ public final class CellSetReader {
     }
 
     private static String memberName(Member member, int depth) {
+        Member ancestor = ancestor(member, depth);
+        return ancestor == null ? null : ancestor.getName();
+    }
+
+    /** @return the property value of the type; BLANK if the member has none */
+    private static Object propertyValue(Member member, int depth, String property, DaxType type) {
+        Member ancestor = ancestor(member, depth);
+        Object value = normalize(ancestor == null ? null : ancestor.getPropertyValue(property));
+        return switch (type) {
+        case STRING -> value == null ? null : value.toString();
+        case INTEGER -> value instanceof Number number ? (Object) number.longValue() : value;
+        case DOUBLE -> value instanceof Number number ? (Object) number.doubleValue() : value;
+        default -> value;
+        };
+    }
+
+    /** @return the member's ancestor at the depth, or itself; null if there is none */
+    private static Member ancestor(Member member, int depth) {
         Member ancestor = member;
         while (ancestor != null && ancestor.getLevel().getDepth() > depth) {
             ancestor = ancestor.getParentMember();
         }
-        return ancestor == null || ancestor.getLevel().getDepth() != depth ? null : ancestor.getName();
+        return ancestor == null || ancestor.getLevel().getDepth() != depth ? null : ancestor;
     }
 
     private static Object cellValue(Cell cell) throws DaxExecutionException {

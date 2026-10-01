@@ -23,6 +23,7 @@ import org.eclipse.daanse.olap.api.element.Dimension;
 import org.eclipse.daanse.olap.api.element.Hierarchy;
 import org.eclipse.daanse.olap.api.element.Level;
 import org.eclipse.daanse.olap.api.element.Member;
+import org.eclipse.daanse.olap.api.element.Property;
 import org.eclipse.daanse.olap.api.result.Cell;
 import org.eclipse.daanse.olap.api.result.CellSet;
 import org.eclipse.daanse.olap.api.result.CellSetAxis;
@@ -57,7 +58,20 @@ public final class OlapMocks {
         when(level.getDepth()).thenReturn(depth);
         when(level.isAll()).thenReturn(depth == 0);
         when(level.isVisible()).thenReturn(true);
+        when(level.getProperties()).thenReturn(new Property[0]);
         return level;
+    }
+
+    public static Property property(String name, boolean internal) {
+        return property(name, internal, Property.Datatype.TYPE_STRING);
+    }
+
+    public static Property property(String name, boolean internal, Property.Datatype type) {
+        Property property = mock(Property.class);
+        when(property.getName()).thenReturn(name);
+        when(property.isInternal()).thenReturn(internal);
+        when(property.getType()).thenReturn(type);
+        return property;
     }
 
     public static Member member(String name, Level level, Member parent) {
