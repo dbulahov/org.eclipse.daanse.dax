@@ -127,7 +127,7 @@ public final class Binder {
         }
         List<EvaluatePlan> evaluates = new ArrayList<>();
         for (EvaluateStatement evaluate : statement.evaluateStatements()) {
-            TablePlan table = table(evaluate.tableExpression());
+            TablePlan table = groupingProperties(table(evaluate.tableExpression()));
             checkProperties(table);
             evaluates.add(new EvaluatePlan(table, orderBy(evaluate.orderBy(), table.columns())));
         }
@@ -258,6 +258,7 @@ public final class Binder {
             measures.add(new NamedMeasure(name, onCube));
         }
         Summarize summarize = (Summarize) summarize(groupBy, measures);
+        filters = withoutNonBlankFilters(summarize, filters);
         if (filters.isEmpty()) {
             return summarize;
         }
@@ -439,6 +440,80 @@ public final class Binder {
     private static boolean computesMeasures(Summarize summarize) {
         return !summarize.measures().isEmpty() || !summarize.added().isEmpty() || summarize.condition().isPresent()
                 || summarize.top().isPresent();
+    }
+
+    /**
+     * Replaces each {@code GENERATE} computing measures by a property without
+     * its level, which MDX {@code Generate} of members cannot, by the grouping
+     * by all its columns where it is one: the inner rows of each outer row are
+     * then the groups of the values together, the measures computed for each.
+     *
+     * @return the table, with such groupings
+     */
+    private static TablePlan groupingProperties(TablePlan table) {
+        return switch (table) {
+        case Generate generate when computesByProperties(generate) -> grouping(generate).<TablePlan>map(s -> s)
+                .orElse(generate);
+        case Filter filter -> new Filter(groupingProperties(filter.source()), filter.condition());
+        case TopN topN -> new TopN(groupingProperties(topN.source()), topN.count(), topN.keys());
+        case Sample sample -> new Sample(groupingProperties(sample.source()), sample.count(), sample.keys());
+        case AddColumns addColumns -> new AddColumns(groupingProperties(addColumns.source()), addColumns.width(),
+                addColumns.added());
+        default -> table;
+        };
+    }
+
+    /** @return whether the inner grouping computes measures by a property without its level */
+    private static boolean computesByProperties(Generate generate) {
+        List<ModelColumn> columns = Summarize.filterColumns(generate);
+        Summarize inner = generate.inner();
+        boolean computes = !inner.allMeasures().isEmpty() || inner.top().isPresent()
+                || inner.condition().filter(c -> !Summarize.existsCondition(c)).isPresent();
+        return computes && columns.stream().anyMatch(c -> Summarize.withoutItsLevel(c, columns));
+    }
+
+    /**
+     * @return the grouping by the columns of the {@code GENERATE}, computing
+     *         the measures of the inner grouping, if it has the same rows: the
+     *         inner grouping has no top and keeps the groups where one of its
+     *         measures is not BLANK, if any; the outer tables are groupings
+     *         without measures, or {@code GENERATE} of them, keeping all values
+     *         or those where one of these measures is not BLANK, which the
+     *         inner ones are values of
+     */
+    private static Optional<Summarize> grouping(Generate generate) {
+        Summarize inner = generate.inner();
+        if (inner.top().isPresent() || !inner.filters().isEmpty()
+                || inner.condition().filter(c -> !Summarize.existsCondition(c)).isPresent()) {
+            return Optional.empty();
+        }
+        Set<ModelMeasure> kept = new LinkedHashSet<>();
+        inner.condition().ifPresent(c -> collectMeasures(c, kept));
+        if (!keepsWhereNotBlank(generate.outer(), kept)) {
+            return Optional.empty();
+        }
+        return Optional.of(new Summarize(Summarize.filterColumns(generate), inner.measures(), inner.condition(),
+                Optional.empty(), List.of(), inner.added()));
+    }
+
+    /**
+     * @param kept the measures one of which is not BLANK in each group kept
+     * @return whether the outer table of a {@code GENERATE} keeps all values of
+     *         its columns or those where one of the measures is not BLANK, so
+     *         at least each of the groups kept
+     */
+    private static boolean keepsWhereNotBlank(TablePlan outer, Set<ModelMeasure> kept) {
+        return switch (outer) {
+        case Summarize table -> table.allMeasures().isEmpty() && table.top().isEmpty() && table.filters().isEmpty()
+                && table.condition().map(c -> {
+                    Set<ModelMeasure> measures = new LinkedHashSet<>();
+                    collectMeasures(c, measures);
+                    return Summarize.existsCondition(c) && !kept.isEmpty() && measures.containsAll(kept);
+                }).orElse(true);
+        case Generate generate -> keepsWhereNotBlank(generate.outer(), kept)
+                && keepsWhereNotBlank(generate.inner(), kept);
+        default -> false;
+        };
     }
 
     /**
@@ -646,6 +721,7 @@ public final class Binder {
                 }
             }
             all.addAll(filters);
+            all = withoutNonBlankFilters(summarize, all);
             // a filter by a measure would be computed within the others, or they within it
             if (all.size() > 1 && all.stream().anyMatch(Binder::filtersByMeasure)) {
                 throw notSupported("CALCULATETABLE with several filters, of them one by a measure");
@@ -681,6 +757,108 @@ public final class Binder {
         // constants are not filtered
         case ConstantTable constant -> constant;
         case Generate generate -> throw notSupported("CALCULATETABLE of GENERATE");
+        };
+    }
+
+    /**
+     * Drops the filter tables on hierarchies not grouped by that keep the
+     * members where stored measures are not BLANK, as
+     * {@code FILTER(VALUES(column), NOT(ISBLANK([measure])))} or
+     * {@code GENERATE} of such ones and of {@code VALUES}, when the
+     * grouping computes only these measures: a stored measure is BLANK where
+     * it is BLANK of each member, so the members dropped change none of them.
+     * In the slicer, the members kept would be aggregated by the cube, which
+     * it cannot for more than its maximum constraints.
+     *
+     * @return the filter tables without those
+     */
+    private static List<TablePlan> withoutNonBlankFilters(Summarize summarize, List<TablePlan> filters) {
+        Set<ModelMeasure> computed = new LinkedHashSet<>();
+        for (NamedMeasure measure : summarize.allMeasures()) {
+            if (!collectMeasures(measure.expression(), computed)) {
+                return filters;
+            }
+        }
+        if (summarize.condition().isPresent() && !collectMeasures(summarize.condition().get(), computed)) {
+            return filters;
+        }
+        summarize.top().ifPresent(top -> computed.add(top.measure()));
+        if (computed.isEmpty()) {
+            return filters;
+        }
+        Set<String> grouped = new TreeSet<>();
+        summarize.groupBy().forEach(c -> grouped.add(c.hierarchy()));
+        List<TablePlan> kept = new ArrayList<>();
+        for (TablePlan filter : filters) {
+            if (!(filter instanceof Summarize || filter instanceof Generate)
+                    || Summarize.filterColumns(filter).stream().anyMatch(c -> grouped.contains(c.hierarchy()))
+                    || !keepsNonBlank(filter, computed)) {
+                kept.add(filter);
+            }
+        }
+        return kept;
+    }
+
+    /**
+     * @param computed the stored measures computed within the filter table
+     * @return whether the filter table keeps at least the members where one of
+     *         the measures is not BLANK: values of columns, each kept where one
+     *         of them is not BLANK or all of them, as {@code GENERATE} of
+     *         {@code FILTER(VALUES(column), NOT(ISBLANK([measure])))} and
+     *         {@code VALUES(column)} gives them
+     */
+    private static boolean keepsNonBlank(TablePlan filter, Set<ModelMeasure> computed) {
+        return switch (filter) {
+        case Summarize table -> !table.groupBy().isEmpty() && table.allMeasures().isEmpty() && table.top().isEmpty()
+                && table.filters().isEmpty() && table.condition()
+                        .map(c -> nonBlankMeasures(c).filter(m -> m.containsAll(computed)).isPresent()).orElse(true);
+        case Generate generate -> keepsNonBlank(generate.outer(), computed)
+                && keepsNonBlank(generate.inner(), computed);
+        default -> false;
+        };
+    }
+
+    /**
+     * @param measures the measures the plan uses are added to
+     * @return whether the plan uses only stored measures, of no columns
+     *         aggregated, which members of other hierarchies filter
+     */
+    private static boolean collectMeasures(ScalarPlan plan, Set<ModelMeasure> measures) {
+        return switch (plan) {
+        case MeasureValue measure -> {
+            measures.add(measure.measure());
+            yield measure.measure().stored();
+        }
+        case Constant constant -> true;
+        case ColumnValue column -> true;
+        case Comparison comparison -> collectMeasures(comparison.left(), measures)
+                && collectMeasures(comparison.right(), measures);
+        case InList in -> collectMeasures(in.value(), measures);
+        case Logical logical -> collectMeasures(logical.left(), measures)
+                && collectMeasures(logical.right(), measures);
+        case Not not -> collectMeasures(not.operand(), measures);
+        case IsBlank isBlank -> collectMeasures(isBlank.operand(), measures);
+        case ColumnAggregate aggregate -> false;
+        };
+    }
+
+    /**
+     * @return the stored measures of a condition that is TRUE where one of
+     *         them is not BLANK, as {@code NOT(ISBLANK([a])) || NOT(ISBLANK([b]))};
+     *         empty if it is another
+     */
+    private static Optional<Set<ModelMeasure>> nonBlankMeasures(ScalarPlan condition) {
+        return switch (condition) {
+        case Not not when not.operand() instanceof IsBlank isBlank
+                && isBlank.operand() instanceof MeasureValue measure && measure.measure().stored() ->
+            Optional.of(Set.of(measure.measure()));
+        case Logical logical when logical.operator() == LogicalOperator.OR ->
+            nonBlankMeasures(logical.left()).flatMap(left -> nonBlankMeasures(logical.right()).map(right -> {
+                Set<ModelMeasure> both = new LinkedHashSet<>(left);
+                both.addAll(right);
+                return both;
+            }));
+        default -> Optional.empty();
         };
     }
 

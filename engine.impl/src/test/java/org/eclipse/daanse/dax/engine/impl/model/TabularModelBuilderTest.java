@@ -76,7 +76,7 @@ class TabularModelBuilderTest {
                 new ModelColumn("Product", "Product.Alt.Category", "[Product].[Alt]", "[Product].[Alt].[Category]", 1,
                         DaxType.STRING));
         assertThat(model.measures()).containsOnlyKeys("Sales Amount");
-        assertThat(model.measure("sales amount")).contains(new ModelMeasure("Sales Amount", "[Measures].[Sales Amount]"));
+        assertThat(model.measure("sales amount")).contains(new ModelMeasure("Sales Amount", "[Measures].[Sales Amount]", true));
     }
 
     @Test

@@ -440,6 +440,10 @@ class MdxGeneratorTest {
 
     /** Customers: City with the property Population, Name with Gender; and Date */
     private static TabularModel customers() {
+        return customers(List.of(SALES));
+    }
+
+    private static TabularModel customers(List<ModelMeasure> measures) {
         ModelColumn city = new ModelColumn("Customers", "Customers.Customers.City", "[Customers].[Customers]",
                 "[Customers].[Customers].[City]", 1, DaxType.STRING);
         ModelColumn name = new ModelColumn("Customers", "Customers.Customers.Name", "[Customers].[Customers]",
@@ -449,11 +453,105 @@ class MdxGeneratorTest {
                         DaxType.STRING, Optional.of("Population")),
                 name, new ModelColumn("Customers", "Customers.Customers.Name.Gender", name.hierarchy(), name.level(), 2,
                         DaxType.STRING, Optional.of("Gender")))),
-                new ModelTable("Date", List.of(YEAR))), List.of(SALES));
+                new ModelTable("Date", List.of(YEAR))), measures);
     }
 
     private static QueryPlan bindCustomers(String dax) throws Exception {
-        return new Binder(customers(), Map.of()).bind(new CCCDaxParserProvider().newParser(dax).parseDaxStatement());
+        return bindCustomers(customers(), dax);
+    }
+
+    private static QueryPlan bindCustomers(TabularModel model, String dax) throws Exception {
+        return new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser(dax).parseDaxStatement());
+    }
+
+    @Test
+    void generatesOfFiltersKeepingWhereTheStoredMeasuresComputedAreNotBlankAreDropped() throws Exception {
+        ModelMeasure count = new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true);
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3),
+                customerLevel("Name", 4)))), List.of(count, new ModelMeasure("Calculated", "[Measures].[Calculated]")));
+        String generate = """
+                KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                    KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                    VALUES('Customers'[Customers.Customers.State Province]))),
+                    VALUES('Customers'[Customers.Customers.City]))),
+                    FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name])),
+                        NOT(ISBLANK('Measures'[%s])))))""";
+        // the total: in the slicer the cube would aggregate each customer kept, too many of them
+        QueryPlan plan = bindCustomers(model, "EVALUATE CALCULATETABLE(ROW(\"MeasuresCustomerCount\", "
+                + "'Measures'[Customer Count]), " + generate.formatted("Customer Count") + ")");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS FROM [C]");
+        // a calculated measure may change
+        plan = bindCustomers(model, "EVALUATE CALCULATETABLE(ROW(\"C\", 'Measures'[Calculated]), "
+                + generate.formatted("Calculated") + ")");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .startsWith("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(");
+
+        // the rows: the customers on the axis, aggregated by none
+        plan = bindCustomers(model, "EVALUATE TOPN(501, ADDCOLUMNS(" + generate.formatted("Customer Count")
+                + """
+                , "MeasuresCustomerCount", 'Measures'[Customer Count]),
+                    'Customers'[Customers.Customers.Country], 1, 'Customers'[Customers.Customers.State Province], 1,
+                    'Customers'[Customers.Customers.City], 1, 'Customers'[Customers.Customers.Name], 1)
+                ORDER BY 'Customers'[Customers.Customers.Country], 'Customers'[Customers.Customers.State Province],
+                    'Customers'[Customers.Customers.City], 'Customers'[Customers.Customers.Name]""");
+        MdxQuery query = MdxGenerator.generate("[C]", (Generate) ((TopN) plan.evaluates().get(0).table()).source());
+        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS, "
+                + "Generate(Generate(Generate([Customers].[Customers].[Country].Members, "
+                + "Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province])), "
+                + "Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City])), "
+                + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[Name]), "
+                + "NOT IsEmpty([Measures].[Customer Count]))) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(0, 2), new MemberName(0, 3),
+                new MemberName(0, 4), new CellValue(0));
+    }
+
+    private static ModelColumn customerLevel(String level, int depth) {
+        return new ModelColumn("Customers", "Customers.Customers." + level, "[Customers].[Customers]",
+                "[Customers].[Customers].[" + level + "]", depth, DaxType.STRING);
+    }
+
+    @Test
+    void filtersKeepingWhereTheStoredMeasuresComputedAreNotBlankAreDropped() throws Exception {
+        TabularModel model = customers(List.of(new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true),
+                new ModelMeasure("Unit Sales", "[Measures].[Unit Sales]", true), SALES));
+        // in the slicer the cube would aggregate each customer kept, too many of them
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("MeasuresCustomerCount", 'Measures'[Customer Count]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name.Gender])),
+                        NOT(ISBLANK('Measures'[Customer Count])))))""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS FROM [C]");
+        plan = bindCustomers(model, """
+                EVALUATE SUMMARIZECOLUMNS('Date'[Year],
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name])),
+                        NOT(ISBLANK('Measures'[Customer Count])) || NOT(ISBLANK('Measures'[Unit Sales])))),
+                    "C", 'Measures'[Customer Count], "U", 'Measures'[Unit Sales])""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Customer Count], [Measures].[Unit Sales]} ON COLUMNS, "
+                        + "NON EMPTY [Date].[Year].Members ON ROWS FROM [C]");
+
+        // a measure not filtered on, or a calculated one, may change
+        String where = "SELECT {[Measures].[Unit Sales]} ON COLUMNS FROM [C] WHERE Filter("
+                + "[Customers].[Customers].[Name].Members, NOT IsEmpty([Measures].[Customer Count]))";
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("U", 'Measures'[Unit Sales]),
+                    FILTER(VALUES('Customers'[Customers.Customers.Name]), NOT(ISBLANK('Measures'[Customer Count]))))""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text()).isEqualTo(where);
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("S", 'Measures'[Sales]),
+                    FILTER(VALUES('Customers'[Customers.Customers.Name]), NOT(ISBLANK('Measures'[Sales]))))""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE Filter("
+                        + "[Customers].[Customers].[Name].Members, NOT IsEmpty([Measures].[Sales]))");
+        // nor are filters kept where both are not BLANK
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("C", 'Measures'[Customer Count]),
+                    FILTER(VALUES('Customers'[Customers.Customers.Name]),
+                        NOT(ISBLANK('Measures'[Customer Count])) && NOT(ISBLANK('Measures'[Unit Sales]))))""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .contains(" WHERE Filter(");
     }
 
     @Test
@@ -534,6 +632,53 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void generatesOfPropertiesComputingMeasuresAreGroupingsByTheirValues() throws Exception {
+        ModelColumn storeName = new ModelColumn("Store", "Store.Store.Store Name", "[Store].[Store]",
+                "[Store].[Store].[Store Name]", 4, DaxType.STRING);
+        ModelMeasure sqft = new ModelMeasure("Store Sqft", "[Measures].[Store Sqft]", true);
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Store", List.of(storeName,
+                storeProperty(storeName, "Frozen Sqft", DaxType.INTEGER), storeProperty(storeName, "Store Type", DaxType.STRING),
+                storeProperty(storeName, "Street address", DaxType.STRING)))), List.of(sqft));
+        QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE TOPN(501, ADDCOLUMNS(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Store'[Store.Store.Store Name.Frozen Sqft])),
+                        VALUES('Store'[Store.Store.Store Name.Store Type]))),
+                        FILTER(KEEPFILTERS(VALUES('Store'[Store.Store.Store Name.Street address])),
+                            NOT(ISBLANK('Measures'[Store Sqft]))))),
+                    "MeasuresStoreSqft", 'Measures'[Store Sqft]),
+                    'Store'[Store.Store.Store Name.Frozen Sqft], 1, 'Store'[Store.Store.Store Name.Store Type], 1,
+                    'Store'[Store.Store.Store Name.Street address], 1)
+                ORDER BY 'Store'[Store.Store.Store Name.Frozen Sqft], 'Store'[Store.Store.Store Name.Store Type],
+                    'Store'[Store.Store.Store Name.Street address]""").parseDaxStatement());
+        // the rows of each outer row are the groups of the values together
+        Summarize summarize = (Summarize) ((TopN) plan.evaluates().get(0).table()).source();
+        assertThat(summarize.groupBy()).extracting(ModelColumn::name).containsExactly(
+                "Store.Store.Store Name.Frozen Sqft", "Store.Store.Store Name.Store Type",
+                "Store.Store.Store Name.Street address");
+        assertThat(summarize.byValues()).containsExactly("[Store].[Store]");
+
+        MdxQuery query = MdxGenerator.summarize("[C]", summarize,
+                Map.of("[Store].[Store]", List.of(List.of(2678L, "Small", "1 Main St"))));
+        String current = "[Store].[Store].CurrentMember.Properties(";
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Store].[Store].[DAX group 1] AS Aggregate(Filter("
+                + "[Store].[Store].[Store Name].Members, (" + current + "\"Frozen Sqft\") = 2678) AND ("
+                + current + "\"Store Type\") = \"Small\") AND (" + current + "\"Street address\") = \"1 Main St\"))) "
+                + "SELECT {[Measures].[Store Sqft]} ON COLUMNS, Filter({[Store].[Store].[DAX group 1]}, "
+                + "NOT IsEmpty([Measures].[Store Sqft])) ON ROWS FROM [C]");
+
+        // a top of each outer row is not one of the groups
+        assertThatThrownBy(() -> new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE GENERATE(VALUES('Store'[Store.Store.Store Name.Frozen Sqft]),
+                    TOPN(1, SUMMARIZECOLUMNS('Store'[Store.Store.Store Name.Store Type], "S", [Store Sqft]), [S]))
+                """).parseDaxStatement())).isInstanceOf(DaxSemanticException.class);
+    }
+
+    private static ModelColumn storeProperty(ModelColumn level, String property, DaxType type) {
+        return new ModelColumn("Store", level.name() + "." + property, level.hierarchy(), level.level(), level.depth(),
+                type, Optional.of(property));
+    }
+
+    @Test
     void groupsOfValuesOfAPropertyAndAShallowerLevelBesideOtherHierarchies() throws Exception {
         QueryPlan plan = bindCustomers("EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.City], "
                 + "'Customers'[Customers.Customers.Name.Gender], 'Date'[Year], \"S\", [Sales], \"E\", ISBLANK([Sales]))");
@@ -592,7 +737,8 @@ class MdxGeneratorTest {
                         + "'Customers'[Customers.Customers.City] = \"Paris\")), \"S\", [Sales])",
                         "a filter table on Customers[Customers.Customers.City], grouped by the values of a property "
                                 + "without its level is not supported yet" },
-                { "EVALUATE GENERATE(VALUES('Date'[Year]), "
+                // the outer rows kept by a measure the inner groups do not keep by
+                { "EVALUATE GENERATE(FILTER(VALUES('Date'[Year]), [Sales] > 1), "
                         + "SUMMARIZECOLUMNS('Customers'[Customers.Customers.Name.Gender], \"S\", [Sales]))",
                         "GENERATE computing measures by Customers[Customers.Customers.Name.Gender], a property, "
                                 + "without its level is not supported yet" } }) {

@@ -19,11 +19,19 @@ import java.util.Objects;
  *
  * @param name       the measure name
  * @param uniqueName the unique name, e.g. {@code [Measures].[Sales Amount]}
+ * @param stored     whether it aggregates the rows of a fact table, not a
+ *                   calculated member: BLANK where they are not, so also
+ *                   where it is BLANK of each part of the context
  */
-public record ModelMeasure(String name, String uniqueName) {
+public record ModelMeasure(String name, String uniqueName, boolean stored) {
 
     public ModelMeasure {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(uniqueName, "uniqueName");
+    }
+
+    /** A measure not known to be stored. */
+    public ModelMeasure(String name, String uniqueName) {
+        this(name, uniqueName, false);
     }
 }

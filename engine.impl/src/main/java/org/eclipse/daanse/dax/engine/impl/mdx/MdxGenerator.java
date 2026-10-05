@@ -170,7 +170,7 @@ public final class MdxGenerator {
                 byName.get(column).put(name, value);
                 String term = memberName(column, columns);
                 // a property may have no value; a name always has
-                term = value == null ? "IsEmpty(" + term + ")" : term + " = " + literal(value);
+                term = value == null ? "IsEmpty(" + term + ")" : equal(term, column, value);
                 condition.add(columns.size() == 1 ? term : "(" + term + ")");
             }
             mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(Filter(")
@@ -425,6 +425,19 @@ public final class MdxGenerator {
         case IsBlank isBlank -> "IsEmpty(" + condition(isBlank.operand(), columns, current) + ")";
         case ColumnAggregate aggregate -> aggregate(aggregate);
         };
+    }
+
+    /**
+     * @param term  the value of the column, as MDX computes it
+     * @param value its value, not BLANK
+     * @return whether the term is the value: a logical one is the condition
+     *         itself or its negation, which MDX {@code =} cannot compare
+     */
+    private static String equal(String term, ModelColumn column, Object value) {
+        if (column.type() == DaxType.BOOLEAN && value instanceof Boolean bool) {
+            return bool ? term : "NOT " + term;
+        }
+        return term + " = " + literal(value);
     }
 
     private static String aggregate(ColumnAggregate aggregate) {
