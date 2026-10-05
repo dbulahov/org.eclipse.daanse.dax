@@ -62,7 +62,7 @@ public final class TabularModelBuilder {
         List<ModelMeasure> measures = new ArrayList<>();
         for (Member measure : cube.getMeasures()) {
             if (measure.isVisible()) {
-                measures.add(new ModelMeasure(measure.getName(), measure.getUniqueName()));
+                measures.add(new ModelMeasure(measure.getName(), measure.getUniqueName(), !measure.isCalculated()));
             }
         }
         return new TabularModel(MdxNames.quote(cube.getName()), tables, measures);

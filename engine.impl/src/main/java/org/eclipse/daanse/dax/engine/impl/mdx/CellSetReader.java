@@ -88,6 +88,12 @@ public final class CellSetReader {
         case STRING -> value == null ? null : value.toString();
         case INTEGER -> value instanceof Number number ? (Object) number.longValue() : value;
         case DOUBLE -> value instanceof Number number ? (Object) number.doubleValue() : value;
+        // a database without a boolean type stores it as a number or text
+        case BOOLEAN -> switch (value) {
+        case Number number -> number.doubleValue() != 0;
+        case String text -> text.equalsIgnoreCase("true") || text.equals("1");
+        case null, default -> value;
+        };
         default -> value;
         };
     }

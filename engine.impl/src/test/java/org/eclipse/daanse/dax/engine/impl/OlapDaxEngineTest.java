@@ -202,6 +202,39 @@ class OlapDaxEngineTest {
     }
 
     @Test
+    void groupsByLogicalPropertyValuesStoredAsNumbers() throws Exception {
+        Property[] properties = { property("Coffee", false, Property.Datatype.TYPE_BOOLEAN) };
+        when(subcategory.getProperties()).thenReturn(properties);
+        Member bikes = member("Bikes", category, null);
+        Member road = member("Road", subcategory, bikes);
+        Member mountain = member("Mountain", subcategory, bikes);
+        when(road.getPropertyValue("Coffee")).thenReturn(1);
+        when(mountain.getPropertyValue("Coffee")).thenReturn(0);
+        CellSet values = cellSet(List.of(List.of(road), List.of(mountain)), new Object[][] { {}, {} });
+        when(olapStatement.executeQuery(
+                "SELECT {} ON COLUMNS, [Product].[ProductHierarchy].[Subcategory].Members ON ROWS FROM [Sales]"))
+                .thenReturn(values);
+        CellSet groups = cellSet(List.of(List.of(member("DAX group 1", subcategory, null)),
+                List.of(member("DAX group 2", subcategory, null))), new Object[][] { { 40.0 }, { 20.5 } });
+        // MDX = compares no logical values
+        String coffee = "[Product].[ProductHierarchy].CurrentMember.Properties(\"Coffee\")";
+        when(olapStatement.executeQuery("WITH MEMBER [Product].[ProductHierarchy].[DAX group 1] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, " + coffee + ")) "
+                + "MEMBER [Product].[ProductHierarchy].[DAX group 2] AS Aggregate(Filter("
+                + "[Product].[ProductHierarchy].[Subcategory].Members, NOT " + coffee + ")) "
+                + "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY {[Product].[ProductHierarchy].[DAX group 1], "
+                + "[Product].[ProductHierarchy].[DAX group 2]} ON ROWS FROM [Sales]")).thenReturn(groups);
+
+        try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
+                DaxResult result = statement.execute("""
+                        EVALUATE SUMMARIZECOLUMNS('Product'[Product.ProductHierarchy.Subcategory.Coffee],
+                            "S", [Sales Amount])
+                        """)) {
+            assertThat(rows(result.nextTable())).containsExactly(List.of(true, 40.0), List.of(false, 20.5));
+        }
+    }
+
+    @Test
     void groupsByNumericPropertyValuesOfTheirType() throws Exception {
         Property[] properties = { property("Sqft", false, Property.Datatype.TYPE_INTEGER) };
         when(subcategory.getProperties()).thenReturn(properties);
