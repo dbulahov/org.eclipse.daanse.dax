@@ -540,7 +540,7 @@ class MdxGeneratorTest {
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
                 .startsWith("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(");
 
-        // the rows: the customers on the axis, aggregated by none
+        // the rows: the customers on the axis, aggregated by none; the outer ones without any left out first
         plan = bindCustomers(model, "EVALUATE TOPN(501, ADDCOLUMNS(" + generate.formatted("Customer Count")
                 + """
                 , "MeasuresCustomerCount", 'Measures'[Customer Count]),
@@ -551,12 +551,49 @@ class MdxGeneratorTest {
         MdxQuery query = MdxGenerator.generate("[C]", (Generate) ((TopN) plan.evaluates().get(0).table()).source());
         assertThat(query.text()).isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS, "
                 + "Generate(Generate(Generate([Customers].[Customers].[Country].Members, "
-                + "Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province])), "
-                + "Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City])), "
+                + "NonEmpty(Descendants([Customers].[Customers].CurrentMember, "
+                + "[Customers].[Customers].[State Province]), {[Measures].[Customer Count]})), "
+                + "NonEmpty(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
+                + "{[Measures].[Customer Count]})), "
                 + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[Name]), "
                 + "NOT IsEmpty([Measures].[Customer Count]))) ON ROWS FROM [C]");
         assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(0, 2), new MemberName(0, 3),
                 new MemberName(0, 4), new CellValue(0));
+    }
+
+    @Test
+    void generatesOfHierarchiesOfOneTableLeaveOutTheTuplesWithoutStoredMeasuresFirst() throws Exception {
+        ModelColumn art = school("Art", "Schule", 1);
+        ModelColumn ganztag = school("Ganztag", "Schule", 1);
+        String dax = """
+                EVALUATE TOPN(501, ADDCOLUMNS(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Schulen'[Schulen.Art.Schule])), VALUES('Schulen'[Schulen.Ganztag.Schule]))),
+                        FILTER(KEEPFILTERS(VALUES('Date'[Year])),
+                            OR(NOT(ISBLANK('Measures'[Klassen])), NOT(ISBLANK('Measures'[Schulen])))))),
+                    "K", 'Measures'[Klassen], "S", 'Measures'[Schulen]), 'Date'[Year], 1)""";
+        // a school of one hierarchy with each of the other: of a stored measure only the pairs of one school
+        for (boolean stored : new boolean[] { true, false }) {
+            TabularModel model = new TabularModel("[C]",
+                    List.of(new ModelTable("Schulen", List.of(art, ganztag)), new ModelTable("Date", List.of(YEAR))),
+                    List.of(new ModelMeasure("Klassen", "[Measures].[Klassen]", stored),
+                            new ModelMeasure("Schulen", "[Measures].[Schulen]", stored)));
+            QueryPlan plan = new Binder(model, Map.of())
+                    .bind(new CCCDaxParserProvider().newParser(dax).parseDaxStatement());
+            String schools = stored
+                    ? "NonEmpty([Schulen].[Ganztag].[Schule].Members, {[Measures].[Klassen], [Measures].[Schulen]})"
+                    : "[Schulen].[Ganztag].[Schule].Members";
+            assertThat(MdxGenerator.generate("[C]", (Generate) ((TopN) plan.evaluates().get(0).table()).source())
+                    .text()).isEqualTo("SELECT {[Measures].[Klassen], [Measures].[Schulen]} ON COLUMNS, "
+                            + "Generate(Generate([Schulen].[Art].[Schule].Members, CrossJoin({[Schulen].[Art].CurrentMember}, "
+                            + schools + ")), CrossJoin({([Schulen].[Art].CurrentMember, "
+                            + "[Schulen].[Ganztag].CurrentMember)}, Filter([Date].[Year].Members, "
+                            + "NOT IsEmpty([Measures].[Klassen]) OR NOT IsEmpty([Measures].[Schulen])))) ON ROWS FROM [C]");
+        }
+    }
+
+    private static ModelColumn school(String hierarchy, String level, int depth) {
+        return new ModelColumn("Schulen", "Schulen." + hierarchy + "." + level, "[Schulen].[" + hierarchy + "]",
+                "[Schulen].[" + hierarchy + "].[" + level + "]", depth, DaxType.STRING);
     }
 
     private static ModelColumn customerLevel(String level, int depth) {
