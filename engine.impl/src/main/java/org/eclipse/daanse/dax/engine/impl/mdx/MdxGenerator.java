@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
 
@@ -341,7 +342,7 @@ public final class MdxGenerator {
             if (!inner.measures().isEmpty()) {
                 innerSet = "NonEmpty(" + innerSet + ", " + measures.keeping() + ")";
             }
-            set = generateSet(generate, innerSet);
+            set = generateSet(generate, innerSet, nonEmptyOf(inner));
         }
         mdx.append("SELECT ").append(measures.all()).append(" ON COLUMNS, ").append(set).append(" ON ROWS FROM ")
                 .append(cube);
@@ -349,20 +350,57 @@ public final class MdxGenerator {
     }
 
     /**
+     * @return the stored measures of the inner grouping's condition, if it keeps
+     *         the groups where one of them is not BLANK: as a stored measure is
+     *         empty of a tuple where it is of each tuple under it, the outer
+     *         tuples where they are all empty have no rows and are left out
+     *         before the inner set is computed for them
+     */
+    private static Optional<String> nonEmptyOf(Summarize inner) {
+        if (inner.condition().isEmpty() || !Summarize.existsCondition(inner.condition().get())) {
+            return Optional.empty();
+        }
+        Set<ModelMeasure> measures = new LinkedHashSet<>();
+        existsMeasures(inner.condition().get(), measures);
+        if (!measures.stream().allMatch(ModelMeasure::stored)) {
+            return Optional.empty();
+        }
+        StringJoiner set = new StringJoiner(", ", "{", "}");
+        measures.forEach(m -> set.add(m.uniqueName()));
+        return Optional.of(set.toString());
+    }
+
+    /** Collects the measures of a condition {@link Summarize#existsCondition} is TRUE of. */
+    private static void existsMeasures(ScalarPlan condition, Set<ModelMeasure> measures) {
+        switch (condition) {
+        case Not not -> measures.add(((MeasureValue) ((IsBlank) not.operand()).operand()).measure());
+        case Logical logical -> {
+            existsMeasures(logical.left(), measures);
+            existsMeasures(logical.right(), measures);
+        }
+        default -> throw new IllegalArgumentException("no condition of measures not BLANK: " + condition);
+        }
+    }
+
+    /**
      * @param innerSet the inner set, computed for the members of each outer tuple
+     * @param nonEmpty the measures one of which is not empty of each tuple of
+     *                 the rows, see {@link #nonEmptyOf}: the inner sets of the
+     *                 outer tables are the tuples where one is not empty
      * @return MDX {@code Generate} of the outer set, joining each of its tuples
      *         with the inner set
      */
-    private static String generateSet(Generate generate, String innerSet) {
+    private static String generateSet(Generate generate, String innerSet, Optional<String> nonEmpty) {
         // the members of a hierarchy the inner set goes deeper in are its own
         List<String> outer = new ArrayList<>(deepest(Summarize.filterColumns(generate.outer())).keySet());
         outer.removeAll(deepest(generate.inner().groupBy()).keySet());
         if (outer.isEmpty()) {
-            return "Generate(" + filterSet(generate.outer()) + ", " + innerSet + ")";
+            return "Generate(" + filterSet(generate.outer(), nonEmpty) + ", " + innerSet + ")";
         }
         StringJoiner current = new StringJoiner(", ", outer.size() == 1 ? "{" : "{(", outer.size() == 1 ? "}" : ")}");
         outer.forEach(h -> current.add(h + ".CurrentMember"));
-        return "Generate(" + filterSet(generate.outer()) + ", CrossJoin(" + current + ", " + innerSet + "))";
+        return "Generate(" + filterSet(generate.outer(), nonEmpty) + ", CrossJoin(" + current + ", " + innerSet
+                + "))";
     }
 
     /**
@@ -430,12 +468,24 @@ public final class MdxGenerator {
 
     /** @return the set of the members of a filter table, see {@link Summarize#filters()} */
     private static String filterSet(TablePlan filter) {
+        return filterSet(filter, Optional.empty());
+    }
+
+    /**
+     * @param nonEmpty the measures one of which is not empty of each tuple the
+     *                 set is computed for, see {@link #nonEmptyOf}: the inner
+     *                 sets of {@code Generate} are the tuples where one is
+     */
+    private static String filterSet(TablePlan filter, Optional<String> nonEmpty) {
         return switch (filter) {
         case Summarize summarize -> conditionAndTop(set(summarize), summarize);
-        case Filter f -> "Filter(" + filterSet(f.source()) + ", "
+        case Filter f -> "Filter(" + filterSet(f.source(), nonEmpty) + ", "
                 + condition(f.condition(), Summarize.filterColumns(f.source())) + ")";
-        case Generate generate -> generateSet(generate,
-                conditionAndTop(innerSet(generate), generate.inner(), Summarize.filterColumns(generate)));
+        case Generate generate -> {
+            String innerSet = conditionAndTop(innerSet(generate), generate.inner(), Summarize.filterColumns(generate));
+            yield generateSet(generate, nonEmpty.map(m -> "NonEmpty(" + innerSet + ", " + m + ")").orElse(innerSet),
+                    nonEmpty);
+        }
         default -> throw new IllegalArgumentException("no filter table: " + filter);
         };
     }
