@@ -275,6 +275,19 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void countRowsOfTableByGroupsCountsTheMembersOfItsDeepestLevel() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE TOPN(101, ADDCOLUMNS(KEEPFILTERS(VALUES('Product'[Category])),
+                    "M0", CALCULATE(COUNTROWS('Product'))), 'Product'[Category], 1)
+                ORDER BY 'Product'[Category]""").parseDaxStatement());
+        Summarize summarize = (Summarize) ((TopN) plan.evaluates().get(0).table()).source();
+        assertThat(MdxGenerator.summarize("[C]", summarize).text()).isEqualTo("WITH MEMBER [Measures].[DAX M0] AS "
+                + "IIf(Count(Existing [Product].[Subcategory].Members) = 0, NULL, "
+                + "Count(Existing [Product].[Subcategory].Members)) "
+                + "SELECT {[Measures].[DAX M0]} ON COLUMNS, [Product].[Category].Members ON ROWS FROM [C]");
+    }
+
+    @Test
     void distinctCountOfColumnByGroups() throws Exception {
         assertThat(mdx("EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"N\", DISTINCTCOUNT('Product'[Subcategory]))"))
                 .isEqualTo("WITH MEMBER [Measures].[DAX N] AS IIf(Count(Existing [Product].[Subcategory].Members) = 0, "
@@ -594,6 +607,59 @@ class MdxGeneratorTest {
     private static ModelColumn school(String hierarchy, String level, int depth) {
         return new ModelColumn("Schulen", "Schulen." + hierarchy + "." + level, "[Schulen].[" + hierarchy + "]",
                 "[Schulen].[" + hierarchy + "].[" + level + "]", depth, DaxType.STRING);
+    }
+
+    @Test
+    void filtersOfNestedCalculateTablesAreKeptTogether() throws Exception {
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3)))),
+                List.of(new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true),
+                        new ModelMeasure("Calculated", "[Measures].[Calculated]")));
+        String dax = """
+                EVALUATE CALCULATETABLE(CALCULATETABLE(ROW("M", 'Measures'[%1$s]),
+                    KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        VALUES('Customers'[Customers.Customers.State Province]))),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                            NOT(ISBLANK('Measures'[%1$s])))))),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        'Customers'[Customers.Customers.Country] = "USA")))""";
+        String usa = "Filter([Customers].[Customers].[Country].Members, "
+                + "UCase([Customers].[Customers].CurrentMember.Name) = \"USA\")";
+        // the countries kept of the first table of GENERATE
+        QueryPlan plan = bindCustomers(model, dax.formatted("Calculated"));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(Generate(" + usa
+                        + ", Descendants([Customers].[Customers].CurrentMember, "
+                        + "[Customers].[Customers].[State Province])), "
+                        + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
+                        + "NOT IsEmpty([Measures].[Calculated])))");
+        // GENERATE keeping where a stored measure is not BLANK is dropped first
+        plan = bindCustomers(model, dax.formatted("Customer Count"));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS FROM [C] WHERE " + usa);
+        // the states kept of those GENERATE joins to each country
+        String state = dax.substring(0, dax.lastIndexOf("KEEPFILTERS(FILTER(")) + """
+                KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.State Province])),
+                        'Customers'[Customers.Customers.State Province] = "CA")))""";
+        plan = bindCustomers(model, state.formatted("Calculated"));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(Generate("
+                        + "[Customers].[Customers].[Country].Members, Filter(Descendants("
+                        + "[Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province]), "
+                        + "UCase([Customers].[Customers].CurrentMember.Name) = \"CA\")), "
+                        + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
+                        + "NOT IsEmpty([Measures].[Calculated])))");
+        // without KEEPFILTERS the inner filter replaces the outer one on its columns
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(CALCULATETABLE(ROW("M", 'Measures'[Calculated]),
+                    FILTER(VALUES('Customers'[Customers.Customers.Country]),
+                        'Customers'[Customers.Customers.Country] = "France")),
+                    'Customers'[Customers.Customers.Country] = "USA")""");
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE "
+                        + "Filter([Customers].[Customers].[Country].Members, "
+                        + "UCase([Customers].[Customers].CurrentMember.Name) = \"FRANCE\")");
     }
 
     private static ModelColumn customerLevel(String level, int depth) {
