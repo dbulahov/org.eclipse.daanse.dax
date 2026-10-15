@@ -611,7 +611,6 @@ class BinderTest {
             "EVALUATE CALCULATETABLE('Product', [Sales Amount] > 1)|a condition filtering CALCULATETABLE must refer to a column", //
             "EVALUATE CALCULATETABLE('Product', {1})|CALCULATETABLE with a filter table of kind ConstantTable or with conditions other than on the text of columns and on measures is not supported yet", //
             "EVALUATE CALCULATETABLE('Product', ALL('Product'))|the table function ALL is not supported yet", //
-            "EVALUATE CALCULATETABLE(CALCULATETABLE('Product', 'Markets'[Country] = \"USA\"), 'Markets'[Country] = \"France\")|CALCULATETABLE filtering Markets[Country] of a table filtered on it already is not supported yet", //
             "EVALUATE CALCULATETABLE(ROW(\"S\", [Sales]), FILTER(VALUES('Markets'[Country]), [Sales] > 1), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
             "EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS('Product'[Category], TOPN(3, VALUES('Markets'[Country]), [Sales]), \"S\", [Sales]), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
             "EVALUATE CALCULATETABLE(VALUES('Store'[City]), 'Store'[Type] = \"Big\")|CALCULATETABLE of columns without measures filtered on other hierarchies of their table is not supported yet", //

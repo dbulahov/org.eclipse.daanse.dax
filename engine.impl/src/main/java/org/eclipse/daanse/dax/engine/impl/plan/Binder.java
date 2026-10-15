@@ -853,21 +853,110 @@ public final class Binder {
         if (arguments.isEmpty()) {
             throw new DaxSemanticException("CALCULATETABLE takes a table and filters");
         }
-        TablePlan table = table(arguments.get(0));
         List<TablePlan> filters = new ArrayList<>();
-        for (DaxExpression argument : arguments.subList(1, arguments.size())) {
-            // without outer filters there is nothing KEEPFILTERS keeps
-            DaxExpression filter = withoutKeepFilters(argument);
-            if (isCondition(filter)) {
-                filters.add(conditionFilter(filter));
-            } else {
-                filterTable(filter, "CALCULATETABLE").ifPresent(filters::add);
-            }
+        // without outer filters there is nothing KEEPFILTERS keeps
+        addFilters(arguments.subList(1, arguments.size()), filters, true);
+        DaxExpression source = arguments.get(0);
+        // the filters of an inner CALCULATETABLE apply within the outer ones
+        while (source instanceof FunctionCall call && call.functionName().equalsIgnoreCase("CALCULATETABLE")
+                && !call.arguments().isEmpty()) {
+            addFilters(call.arguments().subList(1, call.arguments().size()), filters, false);
+            source = call.arguments().get(0);
         }
+        TablePlan table = table(source);
         if (filters.isEmpty()) {
             return table;
         }
         return calculated(table, filters);
+    }
+
+    /**
+     * Adds the filter arguments of a CALCULATETABLE within the filters already
+     * there, of the outer ones and of its other arguments: kept together with
+     * them, as by KEEPFILTERS, or, of an inner one, replacing them on its columns.
+     *
+     * @param outermost whether there are no outer filters, which a filter would replace
+     */
+    private void addFilters(List<DaxExpression> arguments, List<TablePlan> filters, boolean outermost)
+            throws DaxSemanticException {
+        List<TablePlan> outer = List.copyOf(filters);
+        for (DaxExpression argument : arguments) {
+            boolean keep = outermost || withoutKeepFilters(argument) != argument;
+            DaxExpression expression = withoutKeepFilters(argument);
+            Optional<TablePlan> bound = isCondition(expression) ? Optional.of(conditionFilter(expression))
+                    : filterTable(expression, "CALCULATETABLE");
+            if (!keep) {
+                // the outer filters on its columns are replaced, also by all their values
+                Set<ModelColumn> columns = new LinkedHashSet<>(bound.isPresent()
+                        ? Summarize.filterColumns(bound.get()) : filterColumns(expression));
+                for (TablePlan filter : outer) {
+                    List<ModelColumn> on = Summarize.filterColumns(filter);
+                    if (columns.containsAll(on)) {
+                        filters.remove(filter);
+                    } else if (on.stream().anyMatch(columns::contains)) {
+                        throw notSupported("CALCULATETABLE replacing the filter on some of the columns of an outer"
+                                + " filter table");
+                    }
+                }
+            }
+            bound.ifPresent(filters::add);
+        }
+    }
+
+    /** @return the columns of a filter table that keeps all their values, as {@code VALUES} of them */
+    private List<ModelColumn> filterColumns(DaxExpression table) throws DaxSemanticException {
+        return Summarize.filterColumns(table(table));
+    }
+
+    /**
+     * Adds a filter table to the filters it is kept with: where one is on the
+     * text of columns of the first table of a {@code GENERATE} of the other,
+     * as one {@code GENERATE} of the rows kept of its first table.
+     */
+    private static void kept(List<TablePlan> filters, TablePlan filter) {
+        for (int i = 0; i < filters.size(); i++) {
+            TablePlan other = filters.get(i);
+            Optional<TablePlan> both = together(other, filter).or(() -> together(filter, other));
+            if (both.isPresent()) {
+                filters.set(i, both.get());
+                return;
+            }
+        }
+        filters.add(filter);
+    }
+
+    /**
+     * @return the {@code GENERATE} with the table of the columns of the filter
+     *         on their text restricted by it, its first one or one it joins;
+     *         empty if it is not
+     */
+    private static Optional<TablePlan> together(TablePlan table, TablePlan filter) {
+        if (!(table instanceof Generate generate) || !(filter instanceof Filter f) || !onMembers(f.condition())
+                || !filterTableOnCube(f)) {
+            return Optional.empty();
+        }
+        List<ModelColumn> filtered = Summarize.filterColumns(f.source());
+        if (Summarize.filterColumns(generate.outer()).containsAll(filtered)) {
+            if (generate.outer() instanceof Generate outer) {
+                return together(outer, filter).map(o -> new Generate(o, generate.inner()));
+            }
+            try {
+                return Optional.of(new Generate(restricted(generate.outer(), f), generate.inner()));
+            } catch (DaxSemanticException e) {
+                return Optional.empty();
+            }
+        }
+        // the rows joined to each outer one, kept by the condition too; before TOPN it would keep others
+        Summarize inner = generate.inner();
+        if (!inner.groupBy().containsAll(filtered) || inner.top().isPresent()
+                || !(f.source() instanceof Summarize values) || values.condition().isPresent()) {
+            return Optional.empty();
+        }
+        int[] index = filtered.stream().mapToInt(inner.groupBy()::indexOf).toArray();
+        ScalarPlan condition = remapped(f.condition(), index);
+        return Optional.of(new Generate(generate.outer(), new Summarize(inner.groupBy(), inner.measures(),
+                Optional.of(inner.condition().map(c -> and(List.of(c, condition))).orElse(condition)), inner.top(),
+                inner.filters(), inner.added())));
     }
 
     /** @return whether a filter argument is a condition, as {@code 'Product'[Category] = "Bikes"} */
@@ -944,7 +1033,11 @@ public final class Binder {
                 }
             }
             all.addAll(filters);
-            all = withoutNonBlankFilters(summarize, all);
+            List<TablePlan> together = new ArrayList<>();
+            for (TablePlan filter : withoutNonBlankFilters(summarize, all)) {
+                kept(together, filter);
+            }
+            all = together;
             // a filter by a measure would be computed within the others, or they within it
             if (all.size() > 1 && all.stream().anyMatch(Binder::filtersByMeasure)) {
                 throw notSupported("CALCULATETABLE with several filters, of them one by a measure");
@@ -1679,6 +1772,7 @@ public final class Binder {
         case FunctionCall call when call.functionName().equalsIgnoreCase("CALCULATE") -> calculate(call, row);
         case FunctionCall call when call.functionName().equalsIgnoreCase("CURRENCY") -> currency(call, row);
         case FunctionCall call when Aggregation.of(call.functionName()).isPresent() -> columnAggregate(call, row);
+        case FunctionCall call when call.functionName().equalsIgnoreCase("COUNTROWS") -> countRows(call, row);
         case FunctionCall call when call.arguments().isEmpty() -> switch (call.functionName().toUpperCase(Locale.ROOT)) {
             case "BLANK" -> new Constant(null);
             case "TRUE" -> new Constant(Boolean.TRUE);
@@ -1763,6 +1857,27 @@ public final class Binder {
             throw notSupported("the function " + function + where(row));
         }
         return new ColumnAggregate(Aggregation.of(function).orElseThrow(), column(identifier));
+    }
+
+    /**
+     * @return {@code COUNTROWS} of a table: the count of the members of its
+     *         deepest level, one for each row, as the cube computes it for the row
+     */
+    private ScalarPlan countRows(FunctionCall call, List<DaxColumn> row) throws DaxSemanticException {
+        String name = switch (onlyArgument(call, "COUNTROWS takes one table")) {
+        case Entity entity -> entity.name();
+        case Keyword keyword -> keyword.name();
+        default -> throw notSupported("COUNTROWS of an expression of kind " + kind(call.arguments().get(0)));
+        };
+        if (row == null) {
+            throw notSupported("the function COUNTROWS" + where(row));
+        }
+        ModelTable table = model.table(name)
+                .orElseThrow(() -> new DaxSemanticException("the table '" + name + "' does not exist"));
+        ModelColumn deepest = table.columns().stream().filter(c -> c.property().isEmpty())
+                .reduce((a, b) -> b.depth() > a.depth() ? b : a)
+                .orElseThrow(() -> new DaxSemanticException("the table '" + name + "' has no levels to count"));
+        return new ColumnAggregate(Aggregation.COUNTA, deepest);
     }
 
     private ScalarPlan in(BooleanExpression in, List<DaxColumn> row) throws DaxSemanticException {
