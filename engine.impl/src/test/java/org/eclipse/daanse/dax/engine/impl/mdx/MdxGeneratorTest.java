@@ -662,6 +662,76 @@ class MdxGeneratorTest {
                         + "UCase([Customers].[Customers].CurrentMember.Name) = \"FRANCE\")");
     }
 
+    @Test
+    void filtersOfGenerateOnColumnsOfItsInnerTableRestrictTheInnerTable() throws Exception {
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3)))),
+                List.of(new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true)));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        VALUES('Customers'[Customers.Customers.State Province]))),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                            NOT(ISBLANK('Measures'[Store Cost]))))), "MeasuresStoreCost", 'Measures'[Store Cost]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        OR('Customers'[Customers.Customers.Country] = "Mexico",
+                            'Customers'[Customers.Customers.Country] = "USA"))),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                        'Customers'[Customers.Customers.City] = "Acapulco"))),
+                    'Customers'[Customers.Customers.Country], 1, 'Customers'[Customers.Customers.State Province], 1,
+                    'Customers'[Customers.Customers.City], 1)""");
+        Generate generate = (Generate) ((TopN) plan.evaluates().get(0).table()).source();
+        String country = "UCase(Ancestor([Customers].[Customers].CurrentMember, [Customers].[Customers].[Country]).Name)";
+        assertThat(MdxGenerator.generate("[C]", generate).text()).isEqualTo("SELECT {[Measures].[Store Cost]} "
+                + "ON COLUMNS, Generate(Filter(Generate([Customers].[Customers].[Country].Members, NonEmpty("
+                + "Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province]), "
+                + "{[Measures].[Store Cost]})), (" + country + " = \"MEXICO\") OR (" + country + " = \"USA\")), "
+                + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
+                + "(UCase([Customers].[Customers].CurrentMember.Name) = \"ACAPULCO\") "
+                + "AND NOT IsEmpty([Measures].[Store Cost]))) ON ROWS FROM [C]");
+    }
+
+    @Test
+    void calculatedMeasuresFilteredDeeperThanTheGroupsAreComputedOverCalculatedMembersOfThem() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Category])),
+                        NOT(ISBLANK('Measures'[Sales Amount])))), "S", 'Measures'[Sales Amount]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Subcategory])), 'Product'[Subcategory] = "Road"))),
+                    'Product'[Category], 1)
+                ORDER BY 'Product'[Category]""").parseDaxStatement());
+        Summarize summarize = (Summarize) ((TopN) plan.evaluates().get(0).table()).source();
+        assertThat(summarize.byFilters()).containsExactly("[Product]");
+        // the groups the filter keeps are queried first
+        assertThat(MdxGenerator.summarize("[C]", new Summarize(summarize.groupBy(), List.of(), Optional.empty(),
+                Optional.empty(), summarize.filters())).text())
+                .isEqualTo("SELECT {} ON COLUMNS, Exists([Product].[Category].Members, Filter([Product].[Subcategory]"
+                        + ".Members, UCase([Product].CurrentMember.Name) = \"ROAD\")) ON ROWS FROM [C]");
+        String road = "Filter([Product].[Subcategory].Members, UCase([Product].CurrentMember.Name) = \"ROAD\")";
+        MdxQuery query = MdxGenerator.summarize("[C]", summarize, Map.of("[Product]", List.of(List.of("Bikes"))));
+        assertThat(query.text()).isEqualTo("WITH MEMBER [Product].[DAX group 1] AS Aggregate(Exists(" + road
+                + ", Filter([Product].[Category].Members, [Product].CurrentMember.Name = \"Bikes\"))) "
+                + "SELECT {[Measures].[Sales Amount]} ON COLUMNS, Filter({[Product].[DAX group 1]}, "
+                + "NOT IsEmpty([Measures].[Sales Amount])) ON ROWS FROM [C]");
+        assertThat(query.sources()).containsExactly(new GroupValue(0, Map.of("DAX group 1", "Bikes")),
+                new CellValue(0));
+    }
+
+    @Test
+    void filterByMeasuresWithinOneOnTheTextOfItsColumnKeepsTheValuesOfBoth() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(CALCULATETABLE(ROW("S", 'Measures'[Sales Amount]),
+                        KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Subcategory])),
+                            OR(NOT(ISBLANK('Measures'[Sales Amount])), NOT(ISBLANK('Measures'[Unit Sales])))))),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Subcategory])),
+                        OR('Product'[Subcategory] = "Road", 'Product'[Subcategory] = "Caps"))))""")
+                .parseDaxStatement());
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Sales Amount]} ON COLUMNS FROM [C] WHERE Filter("
+                        + "[Product].[Subcategory].Members, ((UCase([Product].CurrentMember.Name) = \"ROAD\") "
+                        + "OR (UCase([Product].CurrentMember.Name) = \"CAPS\")) AND (NOT IsEmpty([Measures].[Sales Amount]) "
+                        + "OR NOT IsEmpty([Measures].[Unit Sales])))");
+    }
+
     private static ModelColumn customerLevel(String level, int depth) {
         return new ModelColumn("Customers", "Customers.Customers." + level, "[Customers].[Customers]",
                 "[Customers].[Customers].[" + level + "]", depth, DaxType.STRING);
