@@ -692,6 +692,31 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void filtersOnColumnsOfBothTablesOfAGenerateFilterTableRestrictBoth() throws Exception {
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3)))),
+                List.of(new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true),
+                        new ModelMeasure("Unit Sales", "[Measures].[Unit Sales]", true)));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(CALCULATETABLE(ROW("MeasuresStoreCost", 'Measures'[Store Cost]),
+                        KEEPFILTERS(GENERATE(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                            FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                                NOT(ISBLANK('Measures'[Unit Sales])))))),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        'Customers'[Customers.Customers.Country] = "USA")),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                        OR('Customers'[Customers.Customers.City] = "Albany",
+                            'Customers'[Customers.Customers.City] = "Altadena"))))""");
+        String name = "UCase([Customers].[Customers].CurrentMember.Name)";
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Store Cost]} ON COLUMNS FROM [C] WHERE Generate(Filter("
+                        + "[Customers].[Customers].[Country].Members, " + name + " = \"USA\"), Filter(Descendants("
+                        + "[Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
+                        + "NOT IsEmpty([Measures].[Unit Sales]) AND ((" + name + " = \"ALBANY\") OR (" + name
+                        + " = \"ALTADENA\"))))");
+    }
+
+    @Test
     void calculatedMeasuresFilteredDeeperThanTheGroupsAreComputedOverCalculatedMembersOfThem() throws Exception {
         QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
                 EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Category])),

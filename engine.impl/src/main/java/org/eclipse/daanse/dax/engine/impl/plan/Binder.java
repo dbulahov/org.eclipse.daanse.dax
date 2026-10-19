@@ -952,7 +952,9 @@ public final class Binder {
      * text of columns of the first table of a {@code GENERATE} of the other,
      * as one {@code GENERATE} of the rows kept of its first table; where one
      * keeps values of columns by measures and the other is on the text of
-     * them, as the values kept by both.
+     * them, as the values kept by both. The table of both is kept with the
+     * other filters in turn, as a {@code GENERATE} filtered on columns of its
+     * first table and of the one it joins.
      */
     private static void kept(List<TablePlan> filters, TablePlan filter) {
         for (int i = 0; i < filters.size(); i++) {
@@ -960,7 +962,8 @@ public final class Binder {
             Optional<TablePlan> both = together(other, filter).or(() -> together(filter, other))
                     .or(() -> byMeasuresOf(other, filter)).or(() -> byMeasuresOf(filter, other));
             if (both.isPresent()) {
-                filters.set(i, both.get());
+                filters.remove(i);
+                kept(filters, both.get());
                 return;
             }
         }
