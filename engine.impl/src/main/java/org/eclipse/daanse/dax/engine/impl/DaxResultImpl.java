@@ -18,6 +18,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.eclipse.daanse.dax.engine.api.DaxException;
@@ -122,15 +124,21 @@ final class DaxResultImpl implements DaxResult {
      * Without measures a group is its values: members of the same names or
      * property values are one. A grouping by the values of properties first
      * queries the values of each such hierarchy, then the measures of their
-     * groups.
+     * groups. So does one by a hierarchy filtered deeper than its groups with
+     * measures the cube does not aggregate, of the groups the filters keep, see
+     * {@link Summarize#byFilters()}.
      */
     private List<List<Object>> summarize(Summarize summarize) throws DaxException {
         Map<String, List<List<Object>>> groups = new LinkedHashMap<>();
-        for (String hierarchy : summarize.byValues()) {
+        Set<String> byGroups = new LinkedHashSet<>(summarize.byValues());
+        byGroups.addAll(summarize.byFilters());
+        for (String hierarchy : byGroups) {
             List<ModelColumn> columns = summarize.groupBy().stream().filter(c -> c.hierarchy().equals(hierarchy))
                     .toList();
+            List<TablePlan> filters = summarize.filters().stream().filter(f -> Summarize.filterColumns(f).stream()
+                    .allMatch(c -> c.hierarchy().equals(hierarchy))).toList();
             List<List<Object>> values = distinct(runner.run(MdxGenerator.summarize(cube,
-                    new Summarize(columns, List.of()))), true);
+                    new Summarize(columns, List.of(), Optional.empty(), Optional.empty(), filters))), true);
             if (values.isEmpty()) {
                 return List.of();
             }

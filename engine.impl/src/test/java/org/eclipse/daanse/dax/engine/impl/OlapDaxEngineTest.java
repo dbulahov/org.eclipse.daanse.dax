@@ -202,6 +202,45 @@ class OlapDaxEngineTest {
     }
 
     @Test
+    void computesCalculatedMeasuresFilteredDeeperThanTheGroupsOverTheirMembersKept() throws Exception {
+        Member margin = measure("Margin");
+        when(margin.isCalculated()).thenReturn(true);
+        when(cube.getMeasures()).thenReturn(List.of(margin));
+        Member bikes = member("Bikes", category, null);
+        Member clothes = member("Clothes", category, null);
+        String road = "Filter([Product].[ProductHierarchy].[Subcategory].Members, "
+                + "UCase([Product].[ProductHierarchy].CurrentMember.Name) = \"ROAD\")";
+        CellSet values = cellSet(List.of(List.of(bikes), List.of(clothes)), new Object[][] { {}, {} });
+        when(olapStatement.executeQuery("SELECT {} ON COLUMNS, Exists([Product].[ProductHierarchy].[Category].Members, "
+                + road + ") ON ROWS FROM [Sales]")).thenReturn(values);
+        CellSet groups = cellSet(List.of(List.of(member("DAX group 1", category, null))),
+                new Object[][] { { 0.25 } });
+        when(olapStatement.executeQuery("WITH MEMBER [Product].[ProductHierarchy].[DAX group 1] AS Aggregate(Exists("
+                + road + ", Filter([Product].[ProductHierarchy].[Category].Members, "
+                + "[Product].[ProductHierarchy].CurrentMember.Name = \"Bikes\"))) "
+                + "MEMBER [Product].[ProductHierarchy].[DAX group 2] AS Aggregate(Exists("
+                + road + ", Filter([Product].[ProductHierarchy].[Category].Members, "
+                + "[Product].[ProductHierarchy].CurrentMember.Name = \"Clothes\"))) "
+                + "SELECT {[Measures].[Margin]} ON COLUMNS, Filter({[Product].[ProductHierarchy].[DAX group 1], "
+                + "[Product].[ProductHierarchy].[DAX group 2]}, NOT IsEmpty([Measures].[Margin])) ON ROWS FROM [Sales]"))
+                .thenReturn(groups);
+
+        try (DaxQueryStatement statement = engine.createStatement(connection, Map.of());
+                DaxResult result = statement.execute("""
+                        EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(
+                                KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Product.ProductHierarchy.Category])),
+                                    NOT(ISBLANK('Measures'[Margin])))),
+                                "M", 'Measures'[Margin]),
+                            KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Product.ProductHierarchy.Subcategory])),
+                                'Product'[Product.ProductHierarchy.Subcategory] = "Road"))),
+                            'Product'[Product.ProductHierarchy.Category], 1)
+                        ORDER BY 'Product'[Product.ProductHierarchy.Category]
+                        """)) {
+            assertThat(rows(result.nextTable())).containsExactly(List.of("Bikes", 0.25));
+        }
+    }
+
+    @Test
     void groupsByLogicalPropertyValuesStoredAsNumbers() throws Exception {
         Property[] properties = { property("Coffee", false, Property.Datatype.TYPE_BOOLEAN) };
         when(subcategory.getProperties()).thenReturn(properties);

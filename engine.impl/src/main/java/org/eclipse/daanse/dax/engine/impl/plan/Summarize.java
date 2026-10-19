@@ -13,8 +13,10 @@
 package org.eclipse.daanse.dax.engine.impl.plan;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -149,6 +151,41 @@ public record Summarize(List<ModelColumn> groupBy, List<NamedMeasure> measures, 
                 if (withoutItsLevel(column, groupBy)) {
                     hierarchies.add(column.hierarchy());
                 }
+            }
+        }
+        return hierarchies;
+    }
+
+    /**
+     * A filter table on one hierarchy grouped by, deeper than the groups,
+     * restricts what the measures compute for a group to its members the
+     * filter keeps. The cube aggregates stored measures over them; with others,
+     * which it does not aggregate, a group is a calculated member aggregating
+     * them, the measures are computed over it.
+     *
+     * @return the hierarchies grouped by calculated members of their groups that
+     *         way; empty if the measures are all stored or with groups by values
+     */
+    public Set<String> byFilters() {
+        Set<ModelMeasure> computed = new LinkedHashSet<>();
+        withMeasures(measure -> {
+            computed.add(measure);
+            return measure;
+        });
+        Set<String> hierarchies = new LinkedHashSet<>();
+        if (computed.stream().allMatch(ModelMeasure::stored) || !byValues().isEmpty()) {
+            return hierarchies;
+        }
+        Map<String, Integer> grouped = new HashMap<>();
+        for (ModelColumn column : groupBy) {
+            grouped.merge(column.hierarchy(), column.depth(), Math::max);
+        }
+        for (TablePlan filter : filters) {
+            List<ModelColumn> columns = filterColumns(filter);
+            String hierarchy = columns.getFirst().hierarchy();
+            if (grouped.containsKey(hierarchy) && columns.stream().allMatch(c -> c.hierarchy().equals(hierarchy))
+                    && columns.stream().anyMatch(c -> c.depth() > grouped.get(hierarchy))) {
+                hierarchies.add(hierarchy);
             }
         }
         return hierarchies;

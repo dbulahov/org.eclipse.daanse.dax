@@ -92,7 +92,8 @@ public final class MdxGenerator {
      *                  each group
      * @return the MDX query computing the plan's table: a group of the values
      *         of a hierarchy is a calculated member aggregating the members
-     *         of the values, its measures are computed over them
+     *         of the values, of them those the filter tables on the hierarchy
+     *         keep, its measures are computed over them
      */
     public static MdxQuery summarize(String cube, Summarize summarize, Map<String, List<List<Object>>> groups) {
         Map<String, ModelColumn> deepest = deepest(summarize.groupBy());
@@ -101,9 +102,13 @@ public final class MdxGenerator {
         StringBuilder mdx = new StringBuilder();
         Map<String, String> groupSets = new LinkedHashMap<>();
         Map<ModelColumn, Map<String, Object>> groupValues = new LinkedHashMap<>();
+        List<TablePlan> grouping = new ArrayList<>();
         for (Map.Entry<String, List<List<Object>>> entry : groups.entrySet()) {
-            groupSets.put(entry.getKey(), groupMembers(entry.getKey(), entry.getValue(), summarize.groupBy(), mdx,
-                    groupValues));
+            List<TablePlan> filters = summarize.filters().stream().filter(f -> Summarize.filterColumns(f).stream()
+                    .allMatch(c -> c.hierarchy().equals(entry.getKey()))).toList();
+            grouping.addAll(filters);
+            groupSets.put(entry.getKey(), groupMembers(entry.getKey(), entry.getValue(), summarize.groupBy(), filters,
+                    mdx, groupValues));
         }
         List<ValueSource> sources = new ArrayList<>();
         for (ModelColumn column : summarize.groupBy()) {
@@ -115,7 +120,9 @@ public final class MdxGenerator {
         Map<String, List<TablePlan>> sliced = new LinkedHashMap<>();
         for (TablePlan filter : summarize.filters()) {
             List<ModelColumn> columns = Summarize.filterColumns(filter);
-            if (columns.stream().anyMatch(c -> deepest.containsKey(c.hierarchy()))) {
+            if (grouping.contains(filter)) {
+                // kept by the members of the groups
+            } else if (columns.stream().anyMatch(c -> deepest.containsKey(c.hierarchy()))) {
                 kept.add(filter);
             } else {
                 // the filters on the same hierarchies are one set of the slicer
@@ -230,16 +237,19 @@ public final class MdxGenerator {
     /**
      * Appends a calculated member for each group of the values of the columns
      * of the hierarchy: the aggregate of the members of the deepest level of
-     * them whose names and properties have the values.
+     * them whose names and properties have the values; with filter tables on
+     * the hierarchy, of the members of their deepest level they keep those
+     * under them.
      *
-     * @param values the values of each group, of the columns of the hierarchy
-     *               grouped by, in their order
-     * @param byName where the values of each column of the hierarchy are put,
-     *               by the name of the member of their group
+     * @param values  the values of each group, of the columns of the hierarchy
+     *                grouped by, in their order
+     * @param filters the filter tables on the hierarchy
+     * @param byName  where the values of each column of the hierarchy are put,
+     *                by the name of the member of their group
      * @return the set of the calculated members
      */
     private static String groupMembers(String hierarchy, List<List<Object>> values, List<ModelColumn> groupBy,
-            StringBuilder mdx, Map<ModelColumn, Map<String, Object>> byName) {
+            List<TablePlan> filters, StringBuilder mdx, Map<ModelColumn, Map<String, Object>> byName) {
         List<ModelColumn> columns = groupBy.stream().filter(c -> c.hierarchy().equals(hierarchy)).toList();
         String level = deepest(columns).get(hierarchy).level();
         columns.forEach(c -> byName.put(c, new LinkedHashMap<>()));
@@ -258,8 +268,12 @@ public final class MdxGenerator {
                 term = value == null ? "IsEmpty(" + term + ")" : equal(term, column, value);
                 condition.add(columns.size() == 1 ? term : "(" + term + ")");
             }
-            mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(Filter(")
-                    .append(level).append(".Members, ").append(condition).append("))");
+            String members = "Filter(" + level + ".Members, " + condition + ")";
+            if (!filters.isEmpty()) {
+                members = "Exists(" + intersection(filters) + ", " + members + ")";
+            }
+            mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(")
+                    .append(members).append(")");
             set.add(member);
         }
         return set.toString();
@@ -357,11 +371,19 @@ public final class MdxGenerator {
      *         before the inner set is computed for them
      */
     private static Optional<String> nonEmptyOf(Summarize inner) {
-        if (inner.condition().isEmpty() || !Summarize.existsCondition(inner.condition().get())) {
+        if (inner.condition().isEmpty()) {
+            return Optional.empty();
+        }
+        // of conditions joined by AND, the groups are kept where the last one is TRUE too
+        ScalarPlan exists = inner.condition().get();
+        while (exists instanceof Logical logical && logical.operator() == LogicalOperator.AND) {
+            exists = logical.right();
+        }
+        if (!Summarize.existsCondition(exists)) {
             return Optional.empty();
         }
         Set<ModelMeasure> measures = new LinkedHashSet<>();
-        existsMeasures(inner.condition().get(), measures);
+        existsMeasures(exists, measures);
         if (!measures.stream().allMatch(ModelMeasure::stored)) {
             return Optional.empty();
         }

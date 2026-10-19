@@ -602,7 +602,6 @@ class BinderTest {
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], KEEPFILTERS(), \"S\", [Sales Amount])|KEEPFILTERS takes one table", //
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], {1}, \"S\", [Sales Amount])|SUMMARIZECOLUMNS with a filter table of kind ConstantTable or with conditions other than on the text of columns and on measures is not supported yet", //
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], FILTER(VALUES('Markets'[Country]), 'Markets'[Country] = 1), \"S\", [Sales Amount])|SUMMARIZECOLUMNS with a filter table of kind Filter or with conditions other than on the text of columns and on measures is not supported yet", //
-            "EVALUATE SUMMARIZECOLUMNS('Product'[Category], FILTER(VALUES('Product'[Subcategory]), 'Product'[Subcategory] = \"Road\"), \"S\", [Sales Amount])|a filter table on Product[Subcategory], deeper than SUMMARIZECOLUMNS groups by, with measures other than stored ones or on several hierarchies is not supported yet", //
             "EVALUATE SUMMARIZECOLUMNS('Product'[Category], FILTER(SUMMARIZECOLUMNS('Product'[Category], 'Markets'[Country]), 'Markets'[Country] = \"USA\"), \"S\", [Sales Amount])|a filter table on hierarchies grouped by and others is not supported yet", //
             "EVALUATE FILTER(SUMMARIZECOLUMNS('Product'[Category], FILTER(VALUES('Markets'[Country]), [Sales] > 1), \"S\", [Sales Amount]), [Unit Sales] > 1)|FILTER by a measure of SUMMARIZECOLUMNS with filter tables is not supported yet", //
             "EVALUATE CALCULATETABLE('Product', 1 = 1)|a condition filtering CALCULATETABLE must refer to a column", //
@@ -613,8 +612,8 @@ class BinderTest {
             "EVALUATE CALCULATETABLE('Product', ALL('Product'))|the table function ALL is not supported yet", //
             "EVALUATE CALCULATETABLE(ROW(\"S\", [Sales]), FILTER(VALUES('Markets'[Country]), [Sales] > 1), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
             "EVALUATE CALCULATETABLE(SUMMARIZECOLUMNS('Product'[Category], TOPN(3, VALUES('Markets'[Country]), [Sales]), \"S\", [Sales]), 'Date'[Year] = \"2020\")|CALCULATETABLE with several filters, of them one by a measure is not supported yet", //
+            "EVALUATE CALCULATETABLE(FILTER(VALUES('Product'[Category]), OR([Sales] > 1, 'Product'[Category] = \"Bikes\")), 'Product'[Subcategory] = \"Road\")|a filter table on Product[Subcategory], deeper than SUMMARIZECOLUMNS groups by, with measures other than stored ones or on several hierarchies is not supported yet", //
             "EVALUATE CALCULATETABLE(VALUES('Store'[City]), 'Store'[Type] = \"Big\")|CALCULATETABLE of columns without measures filtered on other hierarchies of their table is not supported yet", //
-            "EVALUATE CALCULATETABLE(FILTER(VALUES('Product'[Category]), [Sales] > 1), 'Product'[Subcategory] = \"Road\")|a filter table on Product[Subcategory], deeper than SUMMARIZECOLUMNS groups by, with measures other than stored ones or on several hierarchies is not supported yet", //
             "EVALUATE FILTER(CALCULATETABLE(VALUES('Product'[Category]), 'Markets'[Country] = \"USA\"), [Sales] > 1)|FILTER by a measure of SUMMARIZECOLUMNS with filter tables is not supported yet", //
             "EVALUATE ADDCOLUMNS('Product')|ADDCOLUMNS takes a table and pairs of a name and an expression", //
             "EVALUATE ADDCOLUMNS('Product', \"x\")|ADDCOLUMNS takes a table and pairs of a name and an expression", //

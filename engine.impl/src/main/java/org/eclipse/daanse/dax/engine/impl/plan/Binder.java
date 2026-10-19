@@ -265,8 +265,9 @@ public final class Binder {
         if (filters.isEmpty()) {
             return summarize;
         }
-        checkFilters(summarize, filters);
-        return new Summarize(summarize.groupBy(), measures, Optional.empty(), Optional.empty(), filters);
+        Summarize filtered = new Summarize(summarize.groupBy(), measures, Optional.empty(), Optional.empty(), filters);
+        checkFilters(filtered, filters);
+        return filtered;
     }
 
     /**
@@ -548,7 +549,9 @@ public final class Binder {
      * A filter on hierarchies not grouped by goes to the slicer, which takes one
      * filter per hierarchy; one on hierarchies grouped by keeps the groups, and
      * with measures it must not be deeper than the groups, or they would compute
-     * too much.
+     * too much: unless the cube aggregates the measures over the members it
+     * keeps, or computes them over calculated members of the groups, see
+     * {@link Summarize#byFilters()}.
      */
     private static void checkFilters(Summarize summarize, List<TablePlan> filters) throws DaxSemanticException {
         Map<String, Integer> grouped = new TreeMap<>();
@@ -573,7 +576,8 @@ public final class Binder {
                     // the measures are then aggregated over the members the filters keep, see MdxGenerator
                     if (computesMeasures(summarize) && column.depth() > grouped.get(column.hierarchy())
                             && (hierarchies.size() > 1 || !summarize.byValues().isEmpty()
-                                    || !computesStoredMeasures(summarize))) {
+                                    || !computesStoredMeasures(summarize)
+                                            && !computedByGroups(summarize, column.hierarchy()))) {
                         throw notSupported("a filter table on " + column.daxName()
                                 + ", deeper than SUMMARIZECOLUMNS groups by, with measures other than stored ones"
                                 + " or on several hierarchies");
@@ -583,6 +587,41 @@ public final class Binder {
                 throw notSupported("a filter table on hierarchies grouped by and others");
             }
         }
+    }
+
+    /**
+     * @return whether the cube computes the measures over calculated members of
+     *         the groups of the hierarchy, see {@link Summarize#byFilters()}:
+     *         they have no names to compare or members under them to aggregate
+     *         columns of
+     */
+    private static boolean computedByGroups(Summarize summarize, String hierarchy) {
+        if (!summarize.byFilters().contains(hierarchy)) {
+            return false;
+        }
+        Set<Integer> grouped = new TreeSet<>();
+        for (int i = 0; i < summarize.groupBy().size(); i++) {
+            if (summarize.groupBy().get(i).hierarchy().equals(hierarchy)) {
+                grouped.add(i);
+            }
+        }
+        return summarize.allMeasures().stream().noneMatch(m -> aggregatesColumns(m.expression()))
+                && summarize.condition().filter(c -> aggregatesColumns(c) || usesColumns(c, grouped)).isEmpty();
+    }
+
+    private static boolean aggregatesColumns(ScalarPlan plan) {
+        return switch (plan) {
+        case ColumnAggregate aggregate -> true;
+        case Comparison comparison -> aggregatesColumns(comparison.left()) || aggregatesColumns(comparison.right());
+        case InList in -> aggregatesColumns(in.value());
+        case Logical logical -> aggregatesColumns(logical.left()) || aggregatesColumns(logical.right());
+        case Not not -> aggregatesColumns(not.operand());
+        case IsBlank isBlank -> aggregatesColumns(isBlank.operand());
+        case Currency currency -> aggregatesColumns(currency.operand());
+        case MeasureValue measure -> false;
+        case Constant constant -> false;
+        case ColumnValue column -> false;
+        };
     }
 
     /** @return whether all the cube computes for the groups are stored measures, which it can aggregate */
@@ -911,12 +950,15 @@ public final class Binder {
     /**
      * Adds a filter table to the filters it is kept with: where one is on the
      * text of columns of the first table of a {@code GENERATE} of the other,
-     * as one {@code GENERATE} of the rows kept of its first table.
+     * as one {@code GENERATE} of the rows kept of its first table; where one
+     * keeps values of columns by measures and the other is on the text of
+     * them, as the values kept by both.
      */
     private static void kept(List<TablePlan> filters, TablePlan filter) {
         for (int i = 0; i < filters.size(); i++) {
             TablePlan other = filters.get(i);
-            Optional<TablePlan> both = together(other, filter).or(() -> together(filter, other));
+            Optional<TablePlan> both = together(other, filter).or(() -> together(filter, other))
+                    .or(() -> byMeasuresOf(other, filter)).or(() -> byMeasuresOf(filter, other));
             if (both.isPresent()) {
                 filters.set(i, both.get());
                 return;
@@ -957,6 +999,32 @@ public final class Binder {
         return Optional.of(new Generate(generate.outer(), new Summarize(inner.groupBy(), inner.measures(),
                 Optional.of(inner.condition().map(c -> and(List.of(c, condition))).orElse(condition)), inner.top(),
                 inner.filters(), inner.added())));
+    }
+
+    /**
+     * The measures of a value of the columns are computed within the other
+     * filter too, which keeps it or not: for one it keeps, filtered on these
+     * columns only, they are those of the value alone.
+     *
+     * @param table  a filter table of values of columns kept by measures, as
+     *               {@code FILTER(VALUES(column), NOT(ISBLANK([m])))}
+     * @param filter a filter table on the text of some of these columns
+     * @return the values of the columns kept by both, the text first; empty if
+     *         the tables are not such ones
+     */
+    private static Optional<TablePlan> byMeasuresOf(TablePlan table, TablePlan filter) {
+        if (!(table instanceof Summarize values) || !values.measures().isEmpty() || !values.added().isEmpty()
+                || !values.filters().isEmpty() || values.condition().isEmpty() && values.top().isEmpty()
+                || !(filter instanceof Filter f) || !onMembers(f.condition())
+                || !(f.source() instanceof Summarize source) || !source.measures().isEmpty()
+                || source.condition().isPresent() || source.top().isPresent() || !source.filters().isEmpty()
+                || !values.groupBy().containsAll(source.groupBy())) {
+            return Optional.empty();
+        }
+        int[] index = source.groupBy().stream().mapToInt(values.groupBy()::indexOf).toArray();
+        List<ScalarPlan> conditions = new ArrayList<>(List.of(remapped(f.condition(), index)));
+        values.condition().ifPresent(conditions::add);
+        return Optional.of(new Summarize(values.groupBy(), List.of(), Optional.of(and(conditions)), values.top()));
     }
 
     /** @return whether a filter argument is a condition, as {@code 'Product'[Category] = "Bikes"} */
@@ -1082,11 +1150,49 @@ public final class Binder {
         // the outer rows the filters keep, each joined with the inner ones computed for it
         case Generate generate -> {
             TablePlan outer = generate.outer();
+            Summarize inner = generate.inner();
+            List<ModelColumn> outerColumns = Summarize.filterColumns(outer);
             for (TablePlan filter : filters) {
-                outer = restricted(outer, filter);
+                List<ModelColumn> columns = Summarize.filterColumns(filter);
+                // of the inner columns only: the outer rows without inner rows left are dropped by GENERATE
+                if (!outerColumns.containsAll(columns) && inner.groupBy().containsAll(columns)) {
+                    inner = restrictedInner(inner, filter);
+                } else {
+                    outer = restricted(outer, filter);
+                }
             }
-            yield new Generate(outer, generate.inner());
+            yield new Generate(outer, inner);
         }
+        };
+    }
+
+    /**
+     * @param inner  the inner table of {@code GENERATE}
+     * @param filter a filter table on columns the inner table groups by, by the
+     *               text of columns
+     * @return the inner table keeping the rows the filter keeps, before its
+     *         own condition
+     */
+    private static Summarize restrictedInner(Summarize inner, TablePlan filter) throws DaxSemanticException {
+        return switch (filter) {
+        // all values of its columns: keeps all rows
+        case Summarize values when values.measures().isEmpty() && values.condition().isEmpty()
+                && values.top().isEmpty() && values.filters().isEmpty() -> inner;
+        case Filter f when onMembers(f.condition()) -> {
+            Summarize restricted = restrictedInner(inner, f.source());
+            List<ModelColumn> filtered = Summarize.filterColumns(f.source());
+            int[] index = new int[filtered.size()];
+            for (int i = 0; i < index.length; i++) {
+                index[i] = restricted.groupBy().indexOf(filtered.get(i));
+            }
+            ScalarPlan condition = remapped(f.condition(), index);
+            yield new Summarize(restricted.groupBy(), restricted.measures(),
+                    Optional.of(restricted.condition()
+                            .<ScalarPlan>map(c -> new Logical(LogicalOperator.AND, condition, c)).orElse(condition)),
+                    restricted.top(), restricted.filters(), restricted.added());
+        }
+        default -> throw notSupported("CALCULATETABLE of GENERATE filtered other than by the text of columns of "
+                + "its tables");
         };
     }
 
