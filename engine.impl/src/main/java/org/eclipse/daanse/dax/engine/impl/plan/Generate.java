@@ -33,10 +33,13 @@ import org.eclipse.daanse.dax.engine.api.DaxColumn;
  * @param outer the outer table: a grouping without measures, or a filter of one
  *              by its columns, as a filter table is (see
  *              {@link Summarize#filters()}); its columns come first
- * @param inner the inner grouping, without filter tables, of other hierarchies
- *              or of levels of those of the outer table: of a deeper level the
- *              members under the outer one, of one not deeper the outer one's
- *              ancestor; its columns come after
+ * @param inner the inner grouping, of other hierarchies or of levels of those
+ *              of the outer table: of a deeper level the members under the
+ *              outer one, of one not deeper the outer one's ancestor; its
+ *              columns come after. Its filter tables, by the text of columns,
+ *              are on levels of hierarchies of the table deeper than its
+ *              columns: its rows are those with members of them kept under
+ *              them, its stored measures are aggregated over these members
  */
 public record Generate(TablePlan outer, Summarize inner) implements TablePlan {
 

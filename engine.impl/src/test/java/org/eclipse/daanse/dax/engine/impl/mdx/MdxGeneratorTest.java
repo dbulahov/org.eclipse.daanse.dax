@@ -717,6 +717,32 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void filtersOfGenerateDeeperThanItsColumnsRestrictItsRowsAndAggregateItsMeasuresOverTheMembersKept()
+            throws Exception {
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3)))),
+                List.of(new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true)));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.State Province])),
+                            NOT(ISBLANK('Measures'[Store Cost]))))), "MeasuresStoreCost", 'Measures'[Store Cost]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                        'Customers'[Customers.Customers.City] = "Albany"))),
+                    'Customers'[Customers.Customers.Country], 1, 'Customers'[Customers.Customers.State Province], 1)""");
+        Generate generate = (Generate) ((TopN) plan.evaluates().get(0).table()).source();
+        String albany = "Filter([Customers].[Customers].[City].Members, "
+                + "UCase([Customers].[Customers].CurrentMember.Name) = \"ALBANY\")";
+        assertThat(MdxGenerator.generate("[C]", generate).text()).isEqualTo("WITH MEMBER [Measures].[DAX in "
+                + "filters Store Cost] AS Aggregate(Exists(Descendants([Customers].[Customers].CurrentMember, "
+                + "[Customers].[Customers].[City]), " + albany + "), [Measures].[Store Cost]) "
+                + "SELECT {[Measures].[DAX in filters Store Cost]} ON COLUMNS, Generate("
+                + "[Customers].[Customers].[Country].Members, Filter("
+                + "Exists(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province]"
+                + "), " + albany + "), NOT IsEmpty([Measures].[DAX in filters Store Cost]))) ON ROWS FROM [C]");
+    }
+
+    @Test
     void calculatedMeasuresFilteredDeeperThanTheGroupsAreComputedOverCalculatedMembersOfThem() throws Exception {
         QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
                 EVALUATE TOPN(501, CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Product'[Category])),
