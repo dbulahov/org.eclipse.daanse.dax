@@ -563,10 +563,10 @@ public final class MdxGenerator {
         case InList in -> {
             StringJoiner any = new StringJoiner(" OR ", "(", ")").setEmptyValue("(1 = 0)");
             for (Object value : in.values()) {
-                // a member's name is never BLANK
+                // a member's name is never BLANK; text compared in upper case, as the column is
                 if (value != null) {
                     any.add(condition(in.value(), columns, current) + " = "
-                            + literal(value.toString().toUpperCase(Locale.ROOT)));
+                            + literal(value instanceof String text ? text.toUpperCase(Locale.ROOT) : value));
                 }
             }
             yield any.toString();

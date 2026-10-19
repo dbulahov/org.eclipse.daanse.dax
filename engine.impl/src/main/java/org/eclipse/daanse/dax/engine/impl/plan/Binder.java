@@ -523,7 +523,7 @@ public final class Binder {
         return switch (table) {
         case Summarize summarize -> !summarize.groupBy().isEmpty() && summarize.measures().isEmpty()
                 && summarize.filters().isEmpty();
-        case Filter filter -> filterTableOnCube(filter.source()) && onMembers(filter.condition());
+        case Filter filter -> filterTableOnCube(filter.source()) && onMembers(filter);
         // the tuples of its rows, without measures
         case Generate generate -> filterTableOnCube(generate.outer()) && !generate.inner().groupBy().isEmpty()
                 && generate.inner().allMeasures().isEmpty() && generate.inner().filters().isEmpty();
@@ -531,17 +531,42 @@ public final class Binder {
         };
     }
 
-    /** @return whether the cube computes the condition on the names of members, see {@code MdxGenerator} */
-    private static boolean onMembers(ScalarPlan plan) {
+    /** @return whether the cube computes the filter's condition, see {@link #onMembers(ScalarPlan, List)} */
+    private static boolean onMembers(Filter filter) {
+        return onMembers(filter.condition(), Summarize.filterColumns(filter.source()));
+    }
+
+    /**
+     * @param columns the columns a {@link ColumnValue} refers to
+     * @return whether the cube computes the condition on the names of members,
+     *         compared with text, or on the values of their properties of
+     *         another type, compared with values, see {@code MdxGenerator}
+     */
+    private static boolean onMembers(ScalarPlan plan, List<ModelColumn> columns) {
         return switch (plan) {
-        case Comparison comparison -> (comparison.left() instanceof ColumnValue
-                || comparison.left() instanceof Constant c && c.value() instanceof String)
-                && (comparison.right() instanceof ColumnValue
-                        || comparison.right() instanceof Constant c && c.value() instanceof String);
-        case InList in -> in.value() instanceof ColumnValue
-                && in.values().stream().allMatch(v -> v == null || v instanceof String);
-        case Logical logical -> onMembers(logical.left()) && onMembers(logical.right());
-        case Not not -> onMembers(not.operand());
+        case Comparison comparison -> comparable(comparison.left(), comparison.right(), columns)
+                && comparable(comparison.right(), comparison.left(), columns);
+        case InList in -> in.value() instanceof ColumnValue column
+                && in.values().stream().allMatch(v -> v == null || v instanceof String
+                        || columns.get(column.column()).type() != DaxType.STRING && !(v instanceof Boolean));
+        case Logical logical -> onMembers(logical.left(), columns) && onMembers(logical.right(), columns);
+        case Not not -> onMembers(not.operand(), columns);
+        default -> false;
+        };
+    }
+
+    /**
+     * @return whether the operand of a comparison with the other is a column
+     *         or a value the cube compares it with: text, or a value of
+     *         another type but logical, which MDX {@code =} cannot compare,
+     *         with a property of a type other than text
+     */
+    private static boolean comparable(ScalarPlan operand, ScalarPlan other, List<ModelColumn> columns) {
+        return switch (operand) {
+        case ColumnValue column -> true;
+        case Constant c when c.value() instanceof String -> true;
+        case Constant c -> c.value() != null && !(c.value() instanceof Boolean)
+                && other instanceof ColumnValue column && columns.get(column.column()).type() != DaxType.STRING;
         default -> false;
         };
     }
@@ -977,7 +1002,7 @@ public final class Binder {
      *         empty if it is not
      */
     private static Optional<TablePlan> together(TablePlan table, TablePlan filter) {
-        if (!(table instanceof Generate generate) || !(filter instanceof Filter f) || !onMembers(f.condition())
+        if (!(table instanceof Generate generate) || !(filter instanceof Filter f) || !onMembers(f)
                 || !filterTableOnCube(f)) {
             return Optional.empty();
         }
@@ -1019,7 +1044,7 @@ public final class Binder {
     private static Optional<TablePlan> byMeasuresOf(TablePlan table, TablePlan filter) {
         if (!(table instanceof Summarize values) || !values.measures().isEmpty() || !values.added().isEmpty()
                 || !values.filters().isEmpty() || values.condition().isEmpty() && values.top().isEmpty()
-                || !(filter instanceof Filter f) || !onMembers(f.condition())
+                || !(filter instanceof Filter f) || !onMembers(f)
                 || !(f.source() instanceof Summarize source) || !source.measures().isEmpty()
                 || source.condition().isPresent() || source.top().isPresent() || !source.filters().isEmpty()
                 || !values.groupBy().containsAll(source.groupBy())) {
@@ -1054,7 +1079,7 @@ public final class Binder {
         }
         TablePlan values = summarize(List.copyOf(columns), List.of());
         ScalarPlan plan = scalar(condition, values.columns());
-        if (!onMembers(plan)) {
+        if (!onMembers(plan, Summarize.filterColumns(values))) {
             throw notSupported("CALCULATETABLE with a condition other than on the text of columns");
         }
         return new Filter(values, plan);
@@ -1218,7 +1243,7 @@ public final class Binder {
         // all values of its columns: keeps all rows
         case Summarize values when values.measures().isEmpty() && values.condition().isEmpty()
                 && values.top().isEmpty() && values.filters().isEmpty() -> inner;
-        case Filter f when onMembers(f.condition()) -> {
+        case Filter f when onMembers(f) -> {
             Summarize restricted = restrictedInner(inner, f.source());
             List<ModelColumn> filtered = Summarize.filterColumns(f.source());
             int[] index = new int[filtered.size()];
@@ -1249,7 +1274,7 @@ public final class Binder {
         case Summarize values when values.measures().isEmpty() && values.condition().isEmpty()
                 && values.top().isEmpty() && values.filters().isEmpty()
                 && columns.containsAll(values.groupBy()) -> table;
-        case Filter f when onMembers(f.condition()) -> {
+        case Filter f when onMembers(f) -> {
             List<ModelColumn> filtered = Summarize.filterColumns(f.source());
             int[] index = new int[filtered.size()];
             for (int i = 0; i < index.length; i++) {
