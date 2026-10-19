@@ -1166,6 +1166,35 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void filtersOnNumericPropertyValuesCompareNumbers() throws Exception {
+        ModelColumn store = new ModelColumn("Store", "Store.Store.Store Name", "[Store].[Store]",
+                "[Store].[Store].[Store Name]", 4, DaxType.STRING);
+        ModelColumn frozen = new ModelColumn("Store", "Store.Store.Store Name.Frozen Sqft", "[Store].[Store]",
+                "[Store].[Store].[Store Name]", 4, DaxType.INTEGER, Optional.of("Frozen Sqft"));
+        TabularModel model = new TabularModel("[Store]", List.of(new ModelTable("Store", List.of(store, frozen))),
+                List.of(new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true)));
+        String frozenSqft = "[Store].[Store].CurrentMember.Properties(\"Frozen Sqft\")";
+        for (String[] filter : new String[][] {
+                { "'Store'[Store.Store.Store Name.Frozen Sqft] = 4016", frozenSqft + " = 4016" },
+                { "'Store'[Store.Store.Store Name.Frozen Sqft] IN {4016, 5000}",
+                        "(" + frozenSqft + " = 4016 OR " + frozenSqft + " = 5000)" } }) {
+            QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser(
+                    "EVALUATE CALCULATETABLE(ROW(\"S\", 'Measures'[Store Cost]), KEEPFILTERS(FILTER("
+                            + "KEEPFILTERS(VALUES('Store'[Store.Store.Store Name.Frozen Sqft])), " + filter[0] + ")))")
+                    .parseDaxStatement());
+            assertThat(MdxGenerator.summarize("[Store]", (Summarize) plan.evaluates().get(0).table()).text())
+                    .isEqualTo("SELECT {[Measures].[Store Cost]} ON COLUMNS FROM [Store] WHERE Filter("
+                            + "[Store].[Store].[Store Name].Members, " + filter[1] + ")");
+        }
+        // a name is text: compared with a number it is not computed by the cube
+        assertThatThrownBy(() -> new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser(
+                "EVALUATE CALCULATETABLE(ROW(\"S\", 'Measures'[Store Cost]), KEEPFILTERS(FILTER("
+                        + "KEEPFILTERS(VALUES('Store'[Store.Store.Store Name])), "
+                        + "'Store'[Store.Store.Store Name] = 4016)))").parseDaxStatement()))
+                .isInstanceOf(DaxSemanticException.class);
+    }
+
+    @Test
     void groupsOfPropertyValuesHaveNoNamesToFilterOn() throws Exception {
         for (String[] dax : new String[][] {
                 { "EVALUATE FILTER(VALUES('Customers'[Customers.Customers.Name.Gender]), "
