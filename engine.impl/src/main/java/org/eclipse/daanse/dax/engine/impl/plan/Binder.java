@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -525,7 +526,7 @@ public final class Binder {
         case Filter filter -> filterTableOnCube(filter.source()) && onMembers(filter.condition());
         // the tuples of its rows, without measures
         case Generate generate -> filterTableOnCube(generate.outer()) && !generate.inner().groupBy().isEmpty()
-                && generate.inner().allMeasures().isEmpty();
+                && generate.inner().allMeasures().isEmpty() && generate.inner().filters().isEmpty();
         default -> false;
         };
     }
@@ -1155,18 +1156,54 @@ public final class Binder {
             TablePlan outer = generate.outer();
             Summarize inner = generate.inner();
             List<ModelColumn> outerColumns = Summarize.filterColumns(outer);
+            List<TablePlan> deeper = new ArrayList<>(inner.filters());
             for (TablePlan filter : filters) {
                 List<ModelColumn> columns = Summarize.filterColumns(filter);
                 // of the inner columns only: the outer rows without inner rows left are dropped by GENERATE
                 if (!outerColumns.containsAll(columns) && inner.groupBy().containsAll(columns)) {
                     inner = restrictedInner(inner, filter);
+                } else if (deeperThanColumns(generate, filter)) {
+                    deeper.add(filter);
                 } else {
                     outer = restricted(outer, filter);
                 }
             }
+            if (deeper.size() > inner.filters().size()) {
+                Set<ModelMeasure> measures = new LinkedHashSet<>();
+                inner.withMeasures(measure -> {
+                    measures.add(measure);
+                    return measure;
+                });
+                // a calculated measure is not aggregated over the members kept
+                if (!measures.stream().allMatch(ModelMeasure::stored)) {
+                    throw notSupported("CALCULATETABLE of GENERATE with calculated measures filtered on levels "
+                            + "deeper than its columns");
+                }
+                inner = new Summarize(inner.groupBy(), inner.measures(), inner.condition(), inner.top(), deeper,
+                        inner.added());
+            }
             yield new Generate(outer, inner);
         }
         };
+    }
+
+    /**
+     * @param filter a filter table
+     * @return whether it is on the text of columns of levels of hierarchies of
+     *         the {@code GENERATE} deeper than its columns of each, which
+     *         restrict the rows to those with members of them kept under them
+     *         and their measures to these members
+     */
+    private static boolean deeperThanColumns(Generate generate, TablePlan filter) {
+        if (generate.inner().groupBy().isEmpty() || !filterTableOnCube(filter)) {
+            return false;
+        }
+        Map<String, Integer> depths = new HashMap<>();
+        for (ModelColumn column : Summarize.filterColumns(generate)) {
+            depths.merge(column.hierarchy(), column.depth(), Math::max);
+        }
+        return Summarize.filterColumns(filter).stream()
+                .allMatch(c -> depths.containsKey(c.hierarchy()) && c.depth() > depths.get(c.hierarchy()));
     }
 
     /**

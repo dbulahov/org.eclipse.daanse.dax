@@ -347,12 +347,18 @@ public final class MdxGenerator {
             sources.add(source(hierarchies.indexOf(column.hierarchy()), column));
         }
         StringBuilder mdx = new StringBuilder();
+        List<TablePlan> deeper = inner.filters();
+        inner = inFilters(inner, deepest(grouped), deeper, mdx);
         Measures measures = measures(inner, mdx, sources, false);
 
         String set = filterSet(generate.outer());
         if (!inner.groupBy().isEmpty()) {
-            // computed for the members of each outer tuple
-            String innerSet = conditionAndTop(innerSet(generate), inner, Summarize.filterColumns(generate));
+            // computed for the members of each outer tuple, of them those with members the filters keep
+            String innerSet = innerSet(generate);
+            for (TablePlan filter : deeper) {
+                innerSet = "Exists(" + innerSet + ", " + filterSet(filter) + ")";
+            }
+            innerSet = conditionAndTop(innerSet, inner, Summarize.filterColumns(generate));
             if (!inner.measures().isEmpty()) {
                 innerSet = "NonEmpty(" + innerSet + ", " + measures.keeping() + ")";
             }
