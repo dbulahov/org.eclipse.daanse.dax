@@ -13,8 +13,11 @@
 package org.eclipse.daanse.dax.engine.impl.model;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.olap.api.DataTypeJdbc;
@@ -62,11 +65,18 @@ public final class TabularModelBuilder {
             }
             tables.add(table(reader, dimension));
         }
+        Map<String, Member> cubeMeasures = new HashMap<>();
+        for (Member measure : cube.getMeasures()) {
+            cubeMeasures.put(measure.getUniqueName(), measure);
+        }
         List<ModelMeasure> measures = new ArrayList<>();
         for (Member measure : cube.getMeasures()) {
             if (measure.isVisible()) {
+                Optional<Set<String>> decomposed = measure.isCalculated()
+                        ? MeasureDecomposition.shiftedHierarchies(measure, cubeMeasures)
+                        : Optional.empty();
                 measures.add(new ModelMeasure(measure.getName(), measure.getUniqueName(), !measure.isCalculated(),
-                        measureType(measure)));
+                        measureType(measure), decomposed));
             }
         }
         return new TabularModel(MdxNames.quote(cube.getName()), tables, measures);
