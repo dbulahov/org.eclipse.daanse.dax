@@ -178,36 +178,50 @@ class TabularModelBuilderTest {
     }
 
     @Test
-    void sumsAndDifferencesOfStoredMeasuresAreDecomposed() {
+    void sumsAndDifferencesOfStoredMeasuresAreNotBlankWhereOneOfThemIsNot() {
         Member a = storedMeasure("A");
         Member b = storedMeasure("B");
         Member c = storedMeasure("C");
         Member profit = calculated("Profit", infix("-", member(a), member(b)));
         Map<String, Member> cube = cube(a, b, c, profit);
 
-        assertThat(decomposed(profit, cube)).contains(Set.of());
-        assertThat(decomposed(calculated("S", infix("-", infix("+", member(a), member(b)), member(c))), cube))
-                .contains(Set.of());
-        assertThat(decomposed(calculated("Negated", call(new PrefixOperationAtom("-"),
-                mock(FunctionDefinition.class), member(a))), cube)).contains(Set.of());
-        assertThat(decomposed(calculated("Parenthesized", call(new ParenthesesOperationAtom(),
-                mock(ParenthesesFunction.class), infix("+", member(a), member(b)))), cube)).contains(Set.of());
+        assertNotBlankWhereEach(decomposed(profit, cube), "[Measures].[A]", "[Measures].[B]");
+        assertNotBlankWhereEach(decomposed(calculated("S", infix("-", infix("+", member(a), member(b)), member(c))),
+                cube), "[Measures].[A]", "[Measures].[B]", "[Measures].[C]");
+        assertNotBlankWhereEach(decomposed(calculated("Negated", call(new PrefixOperationAtom("-"),
+                mock(FunctionDefinition.class), member(a))), cube), "[Measures].[A]");
+        assertNotBlankWhereEach(decomposed(calculated("Parenthesized", call(new ParenthesesOperationAtom(),
+                mock(ParenthesesFunction.class), infix("+", member(a), member(b)))), cube),
+                "[Measures].[A]", "[Measures].[B]");
         // of another decomposed one
-        assertThat(decomposed(calculated("Total", infix("+", member(profit), member(c))), cube)).contains(Set.of());
-        assertThat(decomposed(calculated("First", call(new FunctionOperationAtom("CoalesceEmpty"),
-                mock(FunctionDefinition.class), member(a), member(b))), cube)).contains(Set.of());
+        assertNotBlankWhereEach(decomposed(calculated("Total", infix("+", member(profit), member(c))), cube),
+                "[Measures].[A]", "[Measures].[B]", "[Measures].[C]");
+        assertNotBlankWhereEach(decomposed(calculated("First", call(new FunctionOperationAtom("CoalesceEmpty"),
+                mock(FunctionDefinition.class), member(a), member(b))), cube), "[Measures].[A]", "[Measures].[B]");
     }
 
     @Test
-    void measuresBlankWhereAStoredMeasureTheyAreComputedOfIsNotAreNotDecomposed() {
+    void productsAndQuotientsAreBlankWhereOneOfThemIs() {
+        Member a = storedMeasure("A");
+        Member b = storedMeasure("B");
+        Map<String, Member> cube = cube(a, b);
+
+        for (String operator : new String[] { "/", "*" }) {
+            MeasureDecomposition decomposition = decomposed(calculated("M", infix(operator, member(a), member(b))),
+                    cube).orElseThrow();
+            assertThat(decomposition.atoms()).containsExactlyInAnyOrder("[Measures].[A]", "[Measures].[B]");
+            assertThat(decomposition.notBlankWhere("[Measures].[A]")).isFalse();
+            assertThat(decomposition.support().holds(Set.of("[Measures].[A]", "[Measures].[B]"))).isTrue();
+        }
+    }
+
+    @Test
+    void otherMeasuresAreNotDecomposed() {
         Member a = storedMeasure("A");
         Member b = storedMeasure("B");
         Member c = storedMeasure("C");
         Map<String, Member> cube = cube(a, b, c);
 
-        // BLANK where one of them is
-        assertThat(decomposed(calculated("Quotient", infix("/", member(a), member(b))), cube)).isEmpty();
-        assertThat(decomposed(calculated("Product", infix("*", member(a), member(b))), cube)).isEmpty();
         // of a constant or a condition
         Expression one = mock(Expression.class);
         assertThat(decomposed(calculated("Plus one", infix("+", member(a), one)), cube)).isEmpty();
@@ -240,21 +254,54 @@ class TabularModelBuilderTest {
         Map<String, Member> cube = cube(sales, cost, profit, lastPeriod, growth);
 
         // BLANK where Profit is, of the current and of the previous period
-        assertThat(decomposed(growth, cube)).contains(Set.of("[Time].[Time]"));
+        MeasureDecomposition decomposition = decomposed(growth, cube).orElseThrow();
+        assertNotBlankWhereEach(Optional.of(decomposition), "[Measures].[Store Sales]", "[Measures].[Store Cost]",
+                "[Measures].[Store Sales] at [Time].[Time].PrevMember",
+                "[Measures].[Store Cost] at [Time].[Time].PrevMember");
+        assertThat(decomposition.shiftedHierarchies()).containsExactly("[Time].[Time]");
         assertThat(decomposed(calculated("Lagged", infix("+", member(profit), tuple(member(profit),
                 call(new MethodOperationAtom("Lag"), mock(FunctionDefinition.class), current(time), number(2))))),
-                cube)).contains(Set.of("[Time].[Time]"));
+                cube).orElseThrow().atoms()).contains("[Measures].[Store Sales] at [Time].[Time].Lag(2)");
         // not BLANK where Profit of the previous period alone is not
-        assertThat(decomposed(calculated("Share", infix("/", member(profit), tuple(member(profit), previous))), cube))
-                .isEmpty();
+        assertThat(decomposed(calculated("Share", infix("/", member(profit), tuple(member(profit), previous))), cube)
+                .orElseThrow().notBlankWhere("[Measures].[Store Sales] at [Time].[Time].PrevMember")).isFalse();
         // of another expression of a member
         assertThat(decomposed(calculated("Other", infix("+", member(profit), tuple(member(profit),
                 call(new FunctionOperationAtom("StrToMember"), mock(FunctionDefinition.class), current(time))))),
                 cube)).isEmpty();
     }
 
-    private static Optional<Set<String>> decomposed(Member measure, Map<String, Member> cube) {
-        return MeasureDecomposition.shiftedHierarchies(measure, cube);
+    @Test
+    void measuresOfTheDataMemberOfTheCurrentMemberAreOfItsOwnRows() {
+        Member salary = storedMeasure("Org Salary");
+        Hierarchy employees = hierarchy("Employees", "[Employees].[Employees]");
+        Dimension dimension = dimension("Employees", false);
+        when(employees.getDimension()).thenReturn(dimension);
+        when(employees.hasAll()).thenReturn(true);
+        Member employeeSalary = calculated("Employee Salary", tuple(
+                navigation("DataMember", navigation("CurrentMember", current(employees))), member(salary)));
+
+        // where Org Salary is BLANK so is it, not where it is not
+        MeasureDecomposition decomposition = decomposed(employeeSalary, cube(salary, employeeSalary)).orElseThrow();
+        assertThat(decomposition.atoms()).containsExactly("[Measures].[Org Salary]");
+        assertThat(decomposition.notBlankWhere("[Measures].[Org Salary]")).isFalse();
+        assertThat(decomposition.shiftedHierarchies()).isEmpty();
+        assertThat(decomposition.currentHierarchies()).containsExactly("[Employees].[Employees]");
+        // the data member of a member of a hierarchy without all member is of some rows
+        when(employees.hasAll()).thenReturn(false);
+        assertThat(decomposed(employeeSalary, cube(salary, employeeSalary))).isEmpty();
+    }
+
+    private static void assertNotBlankWhereEach(Optional<MeasureDecomposition> decomposition, String... atoms) {
+        assertThat(decomposition).isPresent();
+        assertThat(decomposition.get().atoms()).containsExactlyInAnyOrder(atoms);
+        for (String atom : atoms) {
+            assertThat(decomposition.get().notBlankWhere(atom)).as(atom).isTrue();
+        }
+    }
+
+    private static Optional<MeasureDecomposition> decomposed(Member measure, Map<String, Member> cube) {
+        return MeasureDecomposition.of(measure, cube);
     }
 
     private static Map<String, Member> cube(Member... measures) {

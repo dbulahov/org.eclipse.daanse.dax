@@ -24,6 +24,7 @@ import static org.eclipse.daanse.dax.engine.impl.TestModel.YEAR;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +33,7 @@ import java.util.Set;
 import org.eclipse.daanse.dax.engine.api.DaxSemanticException;
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.dax.engine.impl.TestModel;
+import org.eclipse.daanse.dax.engine.impl.model.MeasureDecomposition;
 import org.eclipse.daanse.dax.engine.impl.model.ModelColumn;
 import org.eclipse.daanse.dax.engine.impl.model.ModelMeasure;
 import org.eclipse.daanse.dax.engine.impl.model.ModelTable;
@@ -179,9 +181,10 @@ class MdxGeneratorTest {
     void filterTableOnOtherHierarchyIsTheSlicer() throws Exception {
         assertThat(mdx("EVALUATE SUMMARIZECOLUMNS('Product'[Category], KEEPFILTERS(FILTER(VALUES('Markets'[Country]), "
                 + "'Markets'[Country] IN {\"USA\", \"France\"})), \"S\", [Sales])"))
-                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, NON EMPTY [Product].[Category].Members ON ROWS FROM [C] "
-                        + "WHERE Filter([Markets].[Country].Members, (UCase([Markets].CurrentMember.Name) = \"USA\" "
-                        + "OR UCase([Markets].CurrentMember.Name) = \"FRANCE\"))");
+                .isEqualTo(slicerMember("[Markets]", "Filter([Markets].[Country].Members, "
+                        + "(UCase([Markets].CurrentMember.Name) = \"USA\" "
+                        + "OR UCase([Markets].CurrentMember.Name) = \"FRANCE\"))",
+                        "SELECT {[Measures].[Sales]} ON COLUMNS, NON EMPTY [Product].[Category].Members ON ROWS FROM [C]"));
     }
 
     @Test
@@ -198,20 +201,24 @@ class MdxGeneratorTest {
         assertThat(mdx("EVALUATE SUMMARIZECOLUMNS('Date'[Year], TOPN(3, VALUES('Markets'[Country]), [Sales]), "
                 + "KEEPFILTERS(FILTER('Product', 'Product'[Category] = \"Bikes\" && \"Road\" <> 'Product'[Subcategory])), "
                 + "\"S\", [Sales Amount])"))
-                .isEqualTo("SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C] "
-                        + "WHERE CrossJoin(TopCount(NonEmpty([Markets].[Country].Members, {[Measures].[Sales]}), 3, "
-                        + "[Measures].[Sales]), Filter([Product].[Subcategory].Members, "
+                .isEqualTo("WITH MEMBER [Markets].[DAX slicer 1] AS Aggregate(TopCount(NonEmpty("
+                        + "[Markets].[Country].Members, {[Measures].[Sales]}), 3, [Measures].[Sales])), "
+                        + "SOLVE_ORDER = -100 MEMBER [Product].[DAX slicer 2] AS Aggregate(Filter("
+                        + "[Product].[Subcategory].Members, "
                         + "(UCase(Ancestor([Product].CurrentMember, [Product].[Category]).Name) = \"BIKES\") "
-                        + "AND (\"ROAD\" <> UCase([Product].CurrentMember.Name))))");
+                        + "AND (\"ROAD\" <> UCase([Product].CurrentMember.Name)))), SOLVE_ORDER = -100 "
+                        + "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C] "
+                        + "WHERE ([Markets].[DAX slicer 1], [Product].[DAX slicer 2])");
     }
 
     @Test
     void filterTableByMeasureOrText() throws Exception {
         assertThat(mdx("EVALUATE SUMMARIZECOLUMNS('Product'[Category], KEEPFILTERS(FILTER(VALUES('Markets'[Country]), "
                 + "'Markets'[Country] = \"USA\" || [Sales] > 100)), \"S\", [Sales Amount])"))
-                .isEqualTo("SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[Category].Members "
-                        + "ON ROWS FROM [C] WHERE Filter([Markets].[Country].Members, "
-                        + "(UCase([Markets].CurrentMember.Name) = \"USA\") OR ([Measures].[Sales] > 100))");
+                .isEqualTo(slicerMember("[Markets]", "Filter([Markets].[Country].Members, "
+                        + "(UCase([Markets].CurrentMember.Name) = \"USA\") OR ([Measures].[Sales] > 100))",
+                        "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[Category].Members "
+                                + "ON ROWS FROM [C]"));
     }
 
     @Test
@@ -225,9 +232,10 @@ class MdxGeneratorTest {
     void calculateTableFiltersTheMeasuresOfItsIterators() throws Exception {
         assertThat(mdx("EVALUATE CALCULATETABLE(FILTER(VALUES('Markets'[Country]), [Sales] > 1), "
                 + "'Product'[Category] = \"Bikes\")"))
-                .isEqualTo("SELECT {} ON COLUMNS, Filter([Markets].[Country].Members, [Measures].[Sales] > 1) "
-                        + "ON ROWS FROM [C] WHERE Filter([Product].[Category].Members, "
-                        + "UCase([Product].CurrentMember.Name) = \"BIKES\")");
+                .isEqualTo(slicerMember("[Product]", "Filter([Product].[Category].Members, "
+                        + "UCase([Product].CurrentMember.Name) = \"BIKES\")",
+                        "SELECT {} ON COLUMNS, Filter([Markets].[Country].Members, [Measures].[Sales] > 1) "
+                                + "ON ROWS FROM [C]"));
         assertThat(mdx("EVALUATE CALCULATETABLE(VALUES('Product'[Subcategory]), 'Product'[Category] = \"Bikes\")"))
                 .isEqualTo("SELECT {} ON COLUMNS, Exists([Product].[Subcategory].Members, "
                         + "Filter([Product].[Category].Members, UCase([Product].CurrentMember.Name) = \"BIKES\")) "
@@ -478,12 +486,13 @@ class MdxGeneratorTest {
                             NOT(ISBLANK('Measures'[FactInternetSales]))))))
                 """).parseDaxStatement());
         MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
-        assertThat(query.text()).isEqualTo("SELECT {[Measures].[FactInternetSales]} ON COLUMNS FROM [C] WHERE "
-                + "Generate(Generate(Generate([DimCustomer].[DimCustomer].[AddressLine1].Members, "
+        assertThat(query.text()).isEqualTo(slicerMember("[DimCustomer].[DimCustomer]",
+                "Generate(Generate(Generate([DimCustomer].[DimCustomer].[AddressLine1].Members, "
                 + "Descendants([DimCustomer].[DimCustomer].CurrentMember, [DimCustomer].[DimCustomer].[AddressLine2])), "
                 + "{[DimCustomer].[DimCustomer].CurrentMember}), "
                 + "Filter(Descendants([DimCustomer].[DimCustomer].CurrentMember, "
-                + "[DimCustomer].[DimCustomer].[CommuteDistance]), NOT IsEmpty([Measures].[FactInternetSales])))");
+                + "[DimCustomer].[DimCustomer].[CommuteDistance]), NOT IsEmpty([Measures].[FactInternetSales])))",
+                "SELECT {[Measures].[FactInternetSales]} ON COLUMNS FROM [C]"));
     }
 
     @Test
@@ -548,11 +557,13 @@ class MdxGeneratorTest {
                 + "'Measures'[Customer Count]), " + generate.formatted("Customer Count") + ")");
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
                 .isEqualTo("SELECT {[Measures].[Customer Count]} ON COLUMNS FROM [C]");
-        // a calculated measure may change
+        // a calculated measure may change; it may take the current customer, one member of the slicer
         plan = bindCustomers(model, "EVALUATE CALCULATETABLE(ROW(\"C\", 'Measures'[Calculated]), "
                 + generate.formatted("Calculated") + ")");
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .startsWith("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(");
+                .startsWith("WITH MEMBER [Customers].[Customers].[DAX slicer 1] AS Aggregate(Generate(")
+                .endsWith(", SOLVE_ORDER = -100 SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] "
+                        + "WHERE ([Customers].[Customers].[DAX slicer 1])");
 
         // the rows: the customers on the axis, aggregated by none; the outer ones without any left out first
         plan = bindCustomers(model, "EVALUATE TOPN(501, ADDCOLUMNS(" + generate.formatted("Customer Count")
@@ -580,14 +591,15 @@ class MdxGeneratorTest {
         ModelMeasure count = new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true);
         ModelMeasure sales = new ModelMeasure("Store Sales", "[Measures].[Store Sales]", true);
         ModelMeasure cost = new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true);
-        ModelMeasure profit = new ModelMeasure("Profit", "[Measures].[Profit]", false, DaxType.DECIMAL,
-                Optional.of(Set.of()));
+        ModelMeasure profit = decomposed("Profit", any(sales, cost), Set.of());
         // of the previous period, too
-        ModelMeasure growth = new ModelMeasure("Profit Growth", "[Measures].[Profit Growth]", false,
-                DaxType.DECIMAL, Optional.of(Set.of("[Time].[Time]")));
+        String previous = " at [Time].[Time].PrevMember";
+        ModelMeasure growth = decomposed("Profit Growth", new MeasureDecomposition.Any(List.of(any(sales, cost),
+                any(sales.uniqueName() + previous, cost.uniqueName() + previous))), Set.of("[Time].[Time]"));
         // of the parent customer
-        ModelMeasure share = new ModelMeasure("Share", "[Measures].[Share]", false, DaxType.DECIMAL,
-                Optional.of(Set.of("[Customers].[Customers]")));
+        String parent = " at [Customers].[Customers].Parent";
+        ModelMeasure share = decomposed("Share", any(sales.uniqueName() + parent, cost.uniqueName() + parent),
+                Set.of("[Customers].[Customers]"));
         ModelMeasure average = new ModelMeasure("Avg Sales", "[Measures].[Avg Sales]");
         TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
                 customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3),
@@ -610,8 +622,9 @@ class MdxGeneratorTest {
         // of the customers kept, it is not the same of their parents
         plan = bindCustomers(model, dax.formatted("Share", both.formatted("Share")));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .startsWith("SELECT {[Measures].[Share], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
-                        + "WHERE Generate(");
+                .startsWith("WITH MEMBER [Customers].[Customers].[DAX slicer 1] AS Aggregate(Generate(")
+                .endsWith("SELECT {[Measures].[Share], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
+                        + "WHERE ([Customers].[Customers].[DAX slicer 1])");
         // the customers where Customer Count is BLANK are left out of it
         plan = bindCustomers(model, dax.formatted("Profit", "NOT(ISBLANK('Measures'[Profit]))"));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
@@ -620,8 +633,9 @@ class MdxGeneratorTest {
         // a quotient may change
         plan = bindCustomers(model, dax.formatted("Avg Sales", both.formatted("Avg Sales")));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .startsWith("SELECT {[Measures].[Avg Sales], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
-                        + "WHERE Generate(");
+                .startsWith("WITH MEMBER [Customers].[Customers].[DAX slicer 1] AS Aggregate(Generate(")
+                .endsWith("SELECT {[Measures].[Avg Sales], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
+                        + "WHERE ([Customers].[Customers].[DAX slicer 1])");
     }
 
     @Test
@@ -679,11 +693,12 @@ class MdxGeneratorTest {
         // the countries kept of the first table of GENERATE
         QueryPlan plan = bindCustomers(model, dax.formatted("Calculated"));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(Generate(" + usa
+                .isEqualTo(slicerMember("[Customers].[Customers]", "Generate(Generate(" + usa
                         + ", Descendants([Customers].[Customers].CurrentMember, "
                         + "[Customers].[Customers].[State Province])), "
                         + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
-                        + "NOT IsEmpty([Measures].[Calculated])))");
+                        + "NOT IsEmpty([Measures].[Calculated])))",
+                        "SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C]"));
         // GENERATE keeping where a stored measure is not BLANK is dropped first
         plan = bindCustomers(model, dax.formatted("Customer Count"));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
@@ -694,12 +709,13 @@ class MdxGeneratorTest {
                         'Customers'[Customers.Customers.State Province] = "CA")))""";
         plan = bindCustomers(model, state.formatted("Calculated"));
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE Generate(Generate("
+                .isEqualTo(slicerMember("[Customers].[Customers]", "Generate(Generate("
                         + "[Customers].[Customers].[Country].Members, Filter(Descendants("
                         + "[Customers].[Customers].CurrentMember, [Customers].[Customers].[State Province]), "
                         + "UCase([Customers].[Customers].CurrentMember.Name) = \"CA\")), "
                         + "Filter(Descendants([Customers].[Customers].CurrentMember, [Customers].[Customers].[City]), "
-                        + "NOT IsEmpty([Measures].[Calculated])))");
+                        + "NOT IsEmpty([Measures].[Calculated])))",
+                        "SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C]"));
         // without KEEPFILTERS the inner filter replaces the outer one on its columns
         plan = bindCustomers(model, """
                 EVALUATE CALCULATETABLE(CALCULATETABLE(ROW("M", 'Measures'[Calculated]),
@@ -707,9 +723,27 @@ class MdxGeneratorTest {
                         'Customers'[Customers.Customers.Country] = "France")),
                     'Customers'[Customers.Customers.Country] = "USA")""");
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C] WHERE "
-                        + "Filter([Customers].[Customers].[Country].Members, "
-                        + "UCase([Customers].[Customers].CurrentMember.Name) = \"FRANCE\")");
+                .isEqualTo(slicerMember("[Customers].[Customers]", "Filter([Customers].[Customers].[Country].Members, "
+                        + "UCase([Customers].[Customers].CurrentMember.Name) = \"FRANCE\")",
+                        "SELECT {[Measures].[Calculated]} ON COLUMNS FROM [C]"));
+    }
+
+    @Test
+    void membersInTheSlicerOfAHierarchyWhoseCurrentMemberAMeasureMayTakeAreAggregatedByOne() throws Exception {
+        // ([Employees].CurrentMember.DataMember, [Measures].[Org Salary]): CurrentMember fails of several
+        ModelColumn employee = new ModelColumn("Employees", "Employees.Employees.Employee Id1",
+                "[Employees].[Employees1]", "[Employees].[Employees1].[Employee Id1]", 1, DaxType.STRING);
+        TabularModel model = new TabularModel("[HR]", List.of(new ModelTable("Employees", List.of(employee))),
+                List.of(new ModelMeasure("Employee Salary", "[Measures].[Employee Salary]")));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("MeasuresEmployeeSalary", 'Measures'[Employee Salary]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Employees'[Employees.Employees.Employee Id1])),
+                        NOT(ISBLANK('Measures'[Employee Salary])))))""");
+        assertThat(MdxGenerator.summarize("[HR]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("WITH MEMBER [Employees].[Employees1].[DAX slicer 1] AS Aggregate(Filter("
+                        + "[Employees].[Employees1].[Employee Id1].Members, NOT IsEmpty([Measures].[Employee Salary]))), "
+                        + "SOLVE_ORDER = -100 SELECT {[Measures].[Employee Salary]} ON COLUMNS FROM [HR] "
+                        + "WHERE ([Employees].[Employees1].[DAX slicer 1])");
     }
 
     @Test
@@ -827,10 +861,109 @@ class MdxGeneratorTest {
                         OR('Product'[Subcategory] = "Road", 'Product'[Subcategory] = "Caps"))))""")
                 .parseDaxStatement());
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Sales Amount]} ON COLUMNS FROM [C] WHERE Filter("
+                .isEqualTo(slicerMember("[Product]", "Filter("
                         + "[Product].[Subcategory].Members, ((UCase([Product].CurrentMember.Name) = \"ROAD\") "
                         + "OR (UCase([Product].CurrentMember.Name) = \"CAPS\")) AND (NOT IsEmpty([Measures].[Sales Amount]) "
-                        + "OR NOT IsEmpty([Measures].[Unit Sales])))");
+                        + "OR NOT IsEmpty([Measures].[Unit Sales])))",
+                        "SELECT {[Measures].[Sales Amount]} ON COLUMNS FROM [C]"));
+    }
+
+    /**
+     * @return the query of a measure that may take the current member of the
+     *         hierarchy, with the set of its members in the slicer: one
+     *         calculated member aggregating them
+     */
+    private static String slicerMember(String hierarchy, String set, String select) {
+        String member = hierarchy + ".[DAX slicer 1]";
+        return "WITH MEMBER " + member + " AS Aggregate(" + set + "), SOLVE_ORDER = -100 " + select + " WHERE ("
+                + member + ")";
+    }
+
+    @Test
+    void filtersKeepingWhereTheStoredMeasuresComputedOfAreNotBlankAreDropped() throws Exception {
+        ModelColumn employee = new ModelColumn("Employees", "Employees.Employees.Employee Id1",
+                "[Employees].[Employees1]", "[Employees].[Employees1].[Employee Id1]", 1, DaxType.STRING);
+        ModelColumn payType = new ModelColumn("Pay Type", "Pay Type.Pay Type.Pay Type", "[Pay Type].[Pay Type]",
+                "[Pay Type].[Pay Type].[Pay Type]", 1, DaxType.STRING);
+        ModelMeasure employees = new ModelMeasure("Number of Employees", "[Measures].[Number of Employees]", true);
+        ModelMeasure salary = new ModelMeasure("Org Salary", "[Measures].[Org Salary]", true);
+        ModelMeasure count = new ModelMeasure("Count", "[Measures].[Count]", true);
+        // BLANK where one of them is
+        ModelMeasure average = new ModelMeasure("Avg Salary", "[Measures].[Avg Salary]", false, DaxType.DECIMAL,
+                Optional.of(new MeasureDecomposition(Set.of(salary.uniqueName(), employees.uniqueName()),
+                        new MeasureDecomposition.All(List.of(new MeasureDecomposition.Atom(salary.uniqueName()),
+                                new MeasureDecomposition.Atom(employees.uniqueName()))),
+                        Set.of(), Set.of())));
+        // ([Employees].CurrentMember.DataMember, [Measures].[Org Salary])
+        ModelMeasure employeeSalary = new ModelMeasure("Employee Salary", "[Measures].[Employee Salary]", false,
+                DaxType.DECIMAL, Optional.of(new MeasureDecomposition(Set.of(salary.uniqueName()),
+                        new MeasureDecomposition.Atom(salary.uniqueName() + " at [Employees].[Employees1].DataMember"),
+                        Set.of(), Set.of("[Employees].[Employees1]"))));
+        TabularModel model = new TabularModel("[HR]", List.of(new ModelTable("Employees", List.of(employee)),
+                new ModelTable("Pay Type", List.of(payType))),
+                List.of(employees, salary, count, average, employeeSalary));
+        String dax = """
+                EVALUATE CALCULATETABLE(ROW(%s),
+                    KEEPFILTERS(GENERATE(KEEPFILTERS(VALUES('Employees'[Employees.Employees.Employee Id1])),
+                        FILTER(KEEPFILTERS(VALUES('Pay Type'[Pay Type.Pay Type.Pay Type])), %s))))""";
+        String all = "\"E\", 'Measures'[Number of Employees], \"S\", 'Measures'[Org Salary], \"C\", 'Measures'[Count], "
+                + "\"A\", 'Measures'[Avg Salary], \"ES\", 'Measures'[Employee Salary]";
+        String condition = "OR(OR(OR(OR(NOT(ISBLANK('Measures'[Number of Employees])), "
+                + "NOT(ISBLANK('Measures'[Org Salary]))), NOT(ISBLANK('Measures'[Count]))), "
+                + "NOT(ISBLANK('Measures'[Avg Salary]))), NOT(ISBLANK('Measures'[Employee Salary])))";
+        String select = "SELECT {[Measures].[Number of Employees], [Measures].[Org Salary], [Measures].[Count], "
+                + "[Measures].[Avg Salary], [Measures].[Employee Salary]} ON COLUMNS FROM [HR]";
+        // where one of the stored measures is not BLANK
+        QueryPlan plan = bindCustomers(model, dax.formatted(all, condition));
+        assertThat(MdxGenerator.summarize("[HR]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo(select);
+
+        // the employees where Number of Employees alone is not BLANK are left out of Avg Salary
+        plan = bindCustomers(model, dax.formatted("\"A\", 'Measures'[Avg Salary]",
+                "NOT(ISBLANK('Measures'[Avg Salary]))"));
+        assertThat(MdxGenerator.summarize("[HR]", (Summarize) plan.evaluates().get(0).table()).text())
+                .startsWith("SELECT {[Measures].[Avg Salary]} ON COLUMNS FROM [HR] WHERE Generate(");
+        // those with Org Salary of their subordinates only, of Employee Salary; it takes the current employee
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("ES", 'Measures'[Employee Salary]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Employees'[Employees.Employees.Employee Id1])),
+                        NOT(ISBLANK('Measures'[Employee Salary])))))""");
+        assertThat(MdxGenerator.summarize("[HR]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("WITH MEMBER [Employees].[Employees1].[DAX slicer 1] AS Aggregate(Filter("
+                        + "[Employees].[Employees1].[Employee Id1].Members, NOT IsEmpty([Measures].[Employee Salary]))), "
+                        + "SOLVE_ORDER = -100 SELECT {[Measures].[Employee Salary]} ON COLUMNS FROM [HR] "
+                        + "WHERE ([Employees].[Employees1].[DAX slicer 1])");
+        // of Org Salary too
+        plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ROW("ES", 'Measures'[Employee Salary]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Employees'[Employees.Employees.Employee Id1])),
+                        OR(NOT(ISBLANK('Measures'[Employee Salary])), NOT(ISBLANK('Measures'[Org Salary]))))))""");
+        assertThat(MdxGenerator.summarize("[HR]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Employee Salary]} ON COLUMNS FROM [HR]");
+    }
+
+    private static ModelMeasure decomposed(String name, MeasureDecomposition.Support support, Set<String> shifted) {
+        Set<String> atoms = new LinkedHashSet<>();
+        collectAtoms(support, atoms);
+        return new ModelMeasure(name, "[Measures]." + MdxNames.quote(name), false, DaxType.DECIMAL,
+                Optional.of(new MeasureDecomposition(atoms, support, shifted, shifted)));
+    }
+
+    private static void collectAtoms(MeasureDecomposition.Support support, Set<String> atoms) {
+        switch (support) {
+        case MeasureDecomposition.Atom atom -> atoms.add(atom.key());
+        case MeasureDecomposition.Any any -> any.supports().forEach(s -> collectAtoms(s, atoms));
+        case MeasureDecomposition.All all -> all.supports().forEach(s -> collectAtoms(s, atoms));
+        }
+    }
+
+    private static MeasureDecomposition.Support any(ModelMeasure... measures) {
+        return any(Arrays.stream(measures).map(ModelMeasure::uniqueName).toArray(String[]::new));
+    }
+
+    private static MeasureDecomposition.Support any(String... atoms) {
+        return new MeasureDecomposition.Any(
+                Arrays.stream(atoms).<MeasureDecomposition.Support>map(MeasureDecomposition.Atom::new).toList());
     }
 
     private static ModelColumn customerLevel(String level, int depth) {
@@ -869,8 +1002,9 @@ class MdxGeneratorTest {
                 EVALUATE CALCULATETABLE(ROW("S", 'Measures'[Sales]),
                     FILTER(VALUES('Customers'[Customers.Customers.Name]), NOT(ISBLANK('Measures'[Sales]))))""");
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE Filter("
-                        + "[Customers].[Customers].[Name].Members, NOT IsEmpty([Measures].[Sales]))");
+                .isEqualTo(slicerMember("[Customers].[Customers]", "Filter("
+                        + "[Customers].[Customers].[Name].Members, NOT IsEmpty([Measures].[Sales]))",
+                        "SELECT {[Measures].[Sales]} ON COLUMNS FROM [C]"));
         // nor are filters kept where both are not BLANK
         plan = bindCustomers(model, """
                 EVALUATE CALCULATETABLE(ROW("C", 'Measures'[Customer Count]),
@@ -897,9 +1031,9 @@ class MdxGeneratorTest {
                 + "KEEPFILTERS(FILTER(VALUES('Customers'[Customers.Customers.Name.Gender]), "
                 + "'Customers'[Customers.Customers.Name.Gender] = \"f\")), \"S\", [Sales])");
         assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
-                .isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C] "
-                        + "WHERE Filter([Customers].[Customers].[Name].Members, "
-                        + "UCase([Customers].[Customers].CurrentMember.Properties(\"Gender\")) = \"F\")");
+                .isEqualTo(slicerMember("[Customers].[Customers]", "Filter([Customers].[Customers].[Name].Members, "
+                        + "UCase([Customers].[Customers].CurrentMember.Properties(\"Gender\")) = \"F\")",
+                        "SELECT {[Measures].[Sales]} ON COLUMNS, NON EMPTY [Date].[Year].Members ON ROWS FROM [C]"));
         plan = bindCustomers("EVALUATE GENERATE(VALUES('Customers'[Customers.Customers.Name]), "
                 + "FILTER(VALUES('Customers'[Customers.Customers.City.Population]), "
                 + "'Customers'[Customers.Customers.City.Population] = \"1000\" || [Sales] > 1))");
@@ -1090,10 +1224,10 @@ class MdxGeneratorTest {
                         + "FILTER(VALUES('Markets'[Country]), [Sales] < 9), \"S\", [Sales Amount])")
                 .parseDaxStatement());
         MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
-        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales Amount]} ON COLUMNS, "
-                + "NON EMPTY [Product].[Category].Members ON ROWS FROM [C] WHERE "
-                + "Exists(Filter([Markets].[Country].Members, [Measures].[Sales] > 1), "
-                + "Filter([Markets].[Country].Members, [Measures].[Sales] < 9))");
+        assertThat(query.text()).isEqualTo(slicerMember("[Markets]",
+                "Exists(Filter([Markets].[Country].Members, [Measures].[Sales] > 1), "
+                        + "Filter([Markets].[Country].Members, [Measures].[Sales] < 9))",
+                "SELECT {[Measures].[Sales Amount]} ON COLUMNS, NON EMPTY [Product].[Category].Members ON ROWS FROM [C]"));
     }
 
     private static ModelColumn storeProperty(ModelColumn level, String property, DaxType type) {
