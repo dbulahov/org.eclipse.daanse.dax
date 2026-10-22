@@ -1317,11 +1317,12 @@ public final class Binder {
      * grouping computes only these measures: a stored measure is BLANK where
      * it is BLANK of each member, so the members dropped change none of them.
      * So is a measure computed of stored measures, as
-     * {@code [Store Sales] - [Store Cost]}, when the filter keeps the members
-     * where it is not BLANK, of a hierarchy it takes no other members of:
-     * they are where one of those is not BLANK, see
-     * {@code MeasureDecomposition}. In the slicer, the members kept would be aggregated by the cube, which
-     * it cannot for more than its maximum constraints.
+     * {@code [Store Sales] - [Store Cost]}, of a hierarchy it takes no other
+     * members of, when the filter keeps the members where those are not BLANK:
+     * where one of the measures of its condition is not BLANK where one of
+     * them is, see {@code MeasureDecomposition}. In the slicer, the members
+     * kept would be aggregated by the cube, which it cannot for more than its
+     * maximum constraints, nor give a calculated measure their current member.
      *
      * @return the filter tables without those
      */
@@ -1336,7 +1337,12 @@ public final class Binder {
                 && !collectMeasures(summarize.condition().get(), computed, ModelMeasure::computedOfStored)) {
             return filters;
         }
-        summarize.top().ifPresent(top -> computed.add(top.measure()));
+        if (summarize.top().isPresent()) {
+            if (!summarize.top().get().measure().computedOfStored()) {
+                return filters;
+            }
+            computed.add(summarize.top().get().measure());
+        }
         if (computed.isEmpty()) {
             return filters;
         }
@@ -1360,9 +1366,10 @@ public final class Binder {
     /**
      * @param computed the stored measures and those computed of them within
      *                 the filter table
-     * @return whether the filter table keeps at least the members where one of
-     *         the measures is not BLANK: values of columns, each kept where one
-     *         of them is not BLANK or all of them, as {@code GENERATE} of
+     * @return whether the filter table keeps at least the members where the
+     *         stored measures they are computed of are not BLANK: values of
+     *         columns, each kept where one of the measures of a condition is
+     *         not BLANK, so where those are, or all of them, as {@code GENERATE} of
      *         {@code FILTER(VALUES(column), NOT(ISBLANK([measure])))} and
      *         {@code VALUES(column)} gives them
      */
@@ -1370,11 +1377,22 @@ public final class Binder {
         return switch (filter) {
         case Summarize table -> !table.groupBy().isEmpty() && table.allMeasures().isEmpty() && table.top().isEmpty()
                 && table.filters().isEmpty() && table.condition()
-                        .map(c -> nonBlankMeasures(c).filter(m -> m.containsAll(computed)).isPresent()).orElse(true);
+                        .map(c -> nonBlankMeasures(c).filter(m -> covers(m, computed)).isPresent()).orElse(true);
         case Generate generate -> keepsNonBlank(generate.outer(), computed)
                 && keepsNonBlank(generate.inner(), computed);
         default -> false;
         };
+    }
+
+    /**
+     * @param condition measures of a condition TRUE where one of them is not
+     *                  BLANK
+     * @return whether it is TRUE where each stored measure the measures
+     *         computed are computed of is not BLANK
+     */
+    private static boolean covers(Set<ModelMeasure> condition, Set<ModelMeasure> computed) {
+        return computed.stream().flatMap(m -> m.atoms().stream())
+                .allMatch(atom -> condition.stream().anyMatch(c -> c.notBlankWhere(atom)));
     }
 
     /**

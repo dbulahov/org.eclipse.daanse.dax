@@ -117,7 +117,7 @@ public final class MdxGenerator {
                     : source(member, column));
         }
         List<TablePlan> kept = new ArrayList<>();
-        Map<String, List<TablePlan>> sliced = new LinkedHashMap<>();
+        Map<List<String>, List<TablePlan>> sliced = new LinkedHashMap<>();
         for (TablePlan filter : summarize.filters()) {
             List<ModelColumn> columns = Summarize.filterColumns(filter);
             if (grouping.contains(filter)) {
@@ -126,20 +126,17 @@ public final class MdxGenerator {
                 kept.add(filter);
             } else {
                 // the filters on the same hierarchies are one set of the slicer
-                String together = String.join(", ", columns.stream().map(ModelColumn::hierarchy).distinct().toList());
+                List<String> together = columns.stream().map(ModelColumn::hierarchy).distinct().toList();
                 sliced.computeIfAbsent(together, h -> new ArrayList<>()).add(filter);
             }
         }
+        Set<ModelMeasure> computed = computedMeasures(summarize);
         summarize = inFilters(summarize, deepest, kept, mdx);
+        String slicer = slicer(sliced, computed, mdx);
         Measures measures = measures(summarize, mdx, sources, !groups.isEmpty());
         String keeping = measures.keeping();
 
         mdx.append("SELECT ").append(measures.all()).append(" ON COLUMNS");
-        String slicer = null;
-        for (List<TablePlan> filters : sliced.values()) {
-            String set = intersection(filters);
-            slicer = slicer == null ? set : "CrossJoin(" + slicer + ", " + set + ")";
-        }
         boolean rows = !deepest.isEmpty();
         if (rows) {
             String set = set(summarize, groupSets);
@@ -161,6 +158,59 @@ public final class MdxGenerator {
             mdx.append(" WHERE ").append(slicer);
         }
         return new MdxQuery(mdx.toString(), sources, rows);
+    }
+
+    private static Set<ModelMeasure> computedMeasures(Summarize summarize) {
+        Set<ModelMeasure> measures = new LinkedHashSet<>();
+        summarize.withMeasures(measure -> {
+            measures.add(measure);
+            return measure;
+        });
+        return measures;
+    }
+
+    /**
+     * The slicer of the filter tables on hierarchies not grouped by: the
+     * members of each hierarchy, or of hierarchies together, they keep.
+     * <p>
+     * With a measure that may take the current member of a hierarchy, as
+     * {@code [Employees].CurrentMember} of a calculated one, its members are a
+     * calculated member aggregating them instead, which the measures are
+     * computed over: one member is the current member, several in the slicer
+     * are not. The members of several hierarchies together are left as they
+     * are.
+     * </p>
+     *
+     * @param sliced   the filter tables, by the hierarchies they are on
+     * @param computed the measures computed
+     * @return the slicer; {@code null} without filter tables
+     */
+    private static String slicer(Map<List<String>, List<TablePlan>> sliced, Set<ModelMeasure> computed,
+            StringBuilder mdx) {
+        List<String> sets = new ArrayList<>();
+        List<String> members = new ArrayList<>();
+        for (Map.Entry<List<String>, List<TablePlan>> filters : sliced.entrySet()) {
+            String set = intersection(filters.getValue());
+            if (filters.getKey().size() > 1
+                    || computed.stream().noneMatch(m -> m.takesCurrentMember(filters.getKey().getFirst()))) {
+                sets.add(set);
+                continue;
+            }
+            String member = filters.getKey().getFirst() + "." + MdxNames.quote("DAX slicer " + (members.size() + 1));
+            // computed before the measures, as members of the hierarchy each
+            mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(")
+                    .append(set).append("), SOLVE_ORDER = -100");
+            members.add(member);
+        }
+        if (sets.isEmpty() && !members.isEmpty()) {
+            return "(" + String.join(", ", members) + ")";
+        }
+        members.forEach(m -> sets.add("{" + m + "}"));
+        String slicer = null;
+        for (String set : sets) {
+            slicer = slicer == null ? set : "CrossJoin(" + slicer + ", " + set + ")";
+        }
+        return slicer;
     }
 
     /**
@@ -192,14 +242,9 @@ public final class MdxGenerator {
             scope.add(members);
             hierarchies++;
         }
-        Set<ModelMeasure> measures = new LinkedHashSet<>();
-        summarize.withMeasures(measure -> {
-            measures.add(measure);
-            return measure;
-        });
         // a calculated measure is not aggregated: it is computed for the group,
         // as for one of SUMMARIZE of GENERATE keeping where it is not BLANK
-        if (hierarchies == 0 || !measures.stream().allMatch(ModelMeasure::stored)) {
+        if (hierarchies == 0 || !computedMeasures(summarize).stream().allMatch(ModelMeasure::stored)) {
             return summarize;
         }
         String set = hierarchies == 1 ? scope.toString() : "CrossJoin(" + scope + ")";

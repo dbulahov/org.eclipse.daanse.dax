@@ -29,21 +29,19 @@ import org.eclipse.daanse.dax.engine.api.DaxType;
  * @param type       the type of its values, as CSDL declares it; a client
  *                   applies the measure's format string only to a typed
  *                   numeric column
- * @param decomposed for a calculated measure computed of aggregates of
- *                   stored measures, possibly of other members of some
- *                   hierarchies, and not BLANK where one of them is not, as
- *                   {@code [Store Sales] - [Store Cost]}: the unique names of
- *                   those hierarchies; empty for a stored measure or another
- *                   calculated one, see {@link MeasureDecomposition}
+ * @param decomposition for a calculated measure computed of aggregates of
+ *                      stored measures, as {@code [Store Sales] - [Store Cost]},
+ *                      those and where it is not BLANK of where they are not;
+ *                      empty for a stored measure or another calculated one
  */
 public record ModelMeasure(String name, String uniqueName, boolean stored, DaxType type,
-        Optional<Set<String>> decomposed) {
+        Optional<MeasureDecomposition> decomposition) {
 
     public ModelMeasure {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(uniqueName, "uniqueName");
         Objects.requireNonNull(type, "type");
-        decomposed = decomposed.map(Set::copyOf);
+        Objects.requireNonNull(decomposition, "decomposition");
     }
 
     /** A measure not known to be computed of stored measures. */
@@ -62,13 +60,29 @@ public record ModelMeasure(String name, String uniqueName, boolean stored, DaxTy
     }
 
     /**
-     * @return whether it is stored or computed of stored measures, not BLANK
-     *         where one of them is: of the members of a hierarchy it does not
-     *         take others of where it is not BLANK, it is the same as of all
-     *         of them
+     * @return whether it is stored or computed of stored measures: of the
+     *         members of a hierarchy it takes no others of where its atoms are
+     *         not BLANK, it is the same as of all of them
      */
     public boolean computedOfStored() {
-        return stored || decomposed.isPresent();
+        return stored || decomposition.isPresent();
+    }
+
+    /**
+     * @return the stored measures it is computed of, of its members or others,
+     *         by key: itself if it is stored; none if it is not decomposed
+     * @see MeasureDecomposition#atoms()
+     */
+    public Set<String> atoms() {
+        return stored ? Set.of(uniqueName) : decomposition.map(MeasureDecomposition::atoms).orElse(Set.of());
+    }
+
+    /**
+     * @return whether it is not BLANK where the stored measure of the key is
+     *         not
+     */
+    public boolean notBlankWhere(String atom) {
+        return stored ? uniqueName.equals(atom) : decomposition.filter(d -> d.notBlankWhere(atom)).isPresent();
     }
 
     /**
@@ -76,6 +90,15 @@ public record ModelMeasure(String name, String uniqueName, boolean stored, DaxTy
      *         takes stored measures
      */
     public Set<String> shiftedHierarchies() {
-        return decomposed.orElse(Set.of());
+        return decomposition.map(MeasureDecomposition::shiftedHierarchies).orElse(Set.of());
+    }
+
+    /**
+     * @return whether it may take the current member of the hierarchy, as
+     *         {@code [Employees].CurrentMember} does: not if it is stored; if it
+     *         is not decomposed
+     */
+    public boolean takesCurrentMember(String hierarchy) {
+        return !stored && decomposition.map(d -> d.currentHierarchies().contains(hierarchy)).orElse(true);
     }
 }

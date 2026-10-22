@@ -17,7 +17,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.olap.api.DataTypeJdbc;
@@ -72,11 +71,11 @@ public final class TabularModelBuilder {
         List<ModelMeasure> measures = new ArrayList<>();
         for (Member measure : cube.getMeasures()) {
             if (measure.isVisible()) {
-                Optional<Set<String>> decomposed = measure.isCalculated()
-                        ? MeasureDecomposition.shiftedHierarchies(measure, cubeMeasures)
+                Optional<MeasureDecomposition> decomposition = measure.isCalculated()
+                        ? MeasureDecomposition.of(measure, cubeMeasures)
                         : Optional.empty();
                 measures.add(new ModelMeasure(measure.getName(), measure.getUniqueName(), !measure.isCalculated(),
-                        measureType(measure), decomposed));
+                        measureType(measure), decomposition));
             }
         }
         return new TabularModel(MdxNames.quote(cube.getName()), tables, measures);
