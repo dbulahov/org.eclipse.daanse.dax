@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 
 import org.eclipse.daanse.dax.engine.api.DaxColumn;
 import org.eclipse.daanse.dax.engine.api.DaxExecutionException;
@@ -1315,7 +1316,11 @@ public final class Binder {
      * {@code GENERATE} of such ones and of {@code VALUES}, when the
      * grouping computes only these measures: a stored measure is BLANK where
      * it is BLANK of each member, so the members dropped change none of them.
-     * In the slicer, the members kept would be aggregated by the cube, which
+     * So is a measure computed of stored measures, as
+     * {@code [Store Sales] - [Store Cost]}, when the filter keeps the members
+     * where it is not BLANK, of a hierarchy it takes no other members of:
+     * they are where one of those is not BLANK, see
+     * {@code MeasureDecomposition}. In the slicer, the members kept would be aggregated by the cube, which
      * it cannot for more than its maximum constraints.
      *
      * @return the filter tables without those
@@ -1323,11 +1328,12 @@ public final class Binder {
     private static List<TablePlan> withoutNonBlankFilters(Summarize summarize, List<TablePlan> filters) {
         Set<ModelMeasure> computed = new LinkedHashSet<>();
         for (NamedMeasure measure : summarize.allMeasures()) {
-            if (!collectMeasures(measure.expression(), computed)) {
+            if (!collectMeasures(measure.expression(), computed, ModelMeasure::computedOfStored)) {
                 return filters;
             }
         }
-        if (summarize.condition().isPresent() && !collectMeasures(summarize.condition().get(), computed)) {
+        if (summarize.condition().isPresent()
+                && !collectMeasures(summarize.condition().get(), computed, ModelMeasure::computedOfStored)) {
             return filters;
         }
         summarize.top().ifPresent(top -> computed.add(top.measure()));
@@ -1336,10 +1342,14 @@ public final class Binder {
         }
         Set<String> grouped = new TreeSet<>();
         summarize.groupBy().forEach(c -> grouped.add(c.hierarchy()));
+        // the measures are not the same of the members of a hierarchy they take others of
+        Set<String> shifted = new TreeSet<>();
+        computed.forEach(m -> shifted.addAll(m.shiftedHierarchies()));
         List<TablePlan> kept = new ArrayList<>();
         for (TablePlan filter : filters) {
             if (!(filter instanceof Summarize || filter instanceof Generate)
-                    || Summarize.filterColumns(filter).stream().anyMatch(c -> grouped.contains(c.hierarchy()))
+                    || Summarize.filterColumns(filter).stream()
+                            .anyMatch(c -> grouped.contains(c.hierarchy()) || shifted.contains(c.hierarchy()))
                     || !keepsNonBlank(filter, computed)) {
                 kept.add(filter);
             }
@@ -1348,7 +1358,8 @@ public final class Binder {
     }
 
     /**
-     * @param computed the stored measures computed within the filter table
+     * @param computed the stored measures and those computed of them within
+     *                 the filter table
      * @return whether the filter table keeps at least the members where one of
      *         the measures is not BLANK: values of columns, each kept where one
      *         of them is not BLANK or all of them, as {@code GENERATE} of
@@ -1372,34 +1383,45 @@ public final class Binder {
      *         aggregated, which members of other hierarchies filter
      */
     private static boolean collectMeasures(ScalarPlan plan, Set<ModelMeasure> measures) {
+        return collectMeasures(plan, measures, ModelMeasure::stored);
+    }
+
+    /**
+     * @param measures the measures the plan uses are added to
+     * @param accepted the measures allowed
+     * @return whether the plan uses only measures accepted, of no columns
+     *         aggregated, which members of other hierarchies filter
+     */
+    private static boolean collectMeasures(ScalarPlan plan, Set<ModelMeasure> measures,
+            Predicate<ModelMeasure> accepted) {
         return switch (plan) {
         case MeasureValue measure -> {
             measures.add(measure.measure());
-            yield measure.measure().stored();
+            yield accepted.test(measure.measure());
         }
         case Constant constant -> true;
         case ColumnValue column -> true;
-        case Comparison comparison -> collectMeasures(comparison.left(), measures)
-                && collectMeasures(comparison.right(), measures);
-        case InList in -> collectMeasures(in.value(), measures);
-        case Logical logical -> collectMeasures(logical.left(), measures)
-                && collectMeasures(logical.right(), measures);
-        case Not not -> collectMeasures(not.operand(), measures);
-        case IsBlank isBlank -> collectMeasures(isBlank.operand(), measures);
-        case Currency currency -> collectMeasures(currency.operand(), measures);
+        case Comparison comparison -> collectMeasures(comparison.left(), measures, accepted)
+                && collectMeasures(comparison.right(), measures, accepted);
+        case InList in -> collectMeasures(in.value(), measures, accepted);
+        case Logical logical -> collectMeasures(logical.left(), measures, accepted)
+                && collectMeasures(logical.right(), measures, accepted);
+        case Not not -> collectMeasures(not.operand(), measures, accepted);
+        case IsBlank isBlank -> collectMeasures(isBlank.operand(), measures, accepted);
+        case Currency currency -> collectMeasures(currency.operand(), measures, accepted);
         case ColumnAggregate aggregate -> false;
         };
     }
 
     /**
-     * @return the stored measures of a condition that is TRUE where one of
-     *         them is not BLANK, as {@code NOT(ISBLANK([a])) || NOT(ISBLANK([b]))};
+     * @return the stored measures and those computed of them of a condition
+     *         that is TRUE where one of them is not BLANK, as {@code NOT(ISBLANK([a])) || NOT(ISBLANK([b]))};
      *         empty if it is another
      */
     private static Optional<Set<ModelMeasure>> nonBlankMeasures(ScalarPlan condition) {
         return switch (condition) {
         case Not not when not.operand() instanceof IsBlank isBlank
-                && isBlank.operand() instanceof MeasureValue measure && measure.measure().stored() ->
+                && isBlank.operand() instanceof MeasureValue measure && measure.measure().computedOfStored() ->
             Optional.of(Set.of(measure.measure()));
         case Logical logical when logical.operator() == LogicalOperator.OR ->
             nonBlankMeasures(logical.left()).flatMap(left -> nonBlankMeasures(logical.right()).map(right -> {

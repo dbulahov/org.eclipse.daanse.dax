@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.daanse.dax.engine.api.DaxSemanticException;
 import org.eclipse.daanse.dax.engine.api.DaxType;
@@ -572,6 +573,55 @@ class MdxGeneratorTest {
                 + "NOT IsEmpty([Measures].[Customer Count]))) ON ROWS FROM [C]");
         assertThat(query.sources()).containsExactly(new MemberName(0, 1), new MemberName(0, 2), new MemberName(0, 3),
                 new MemberName(0, 4), new CellValue(0));
+    }
+
+    @Test
+    void generatesOfFiltersKeepingWhereMeasuresComputedOfStoredOnesAreNotBlankAreDropped() throws Exception {
+        ModelMeasure count = new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true);
+        ModelMeasure sales = new ModelMeasure("Store Sales", "[Measures].[Store Sales]", true);
+        ModelMeasure cost = new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true);
+        ModelMeasure profit = new ModelMeasure("Profit", "[Measures].[Profit]", false, DaxType.DECIMAL,
+                Optional.of(Set.of()));
+        // of the previous period, too
+        ModelMeasure growth = new ModelMeasure("Profit Growth", "[Measures].[Profit Growth]", false,
+                DaxType.DECIMAL, Optional.of(Set.of("[Time].[Time]")));
+        // of the parent customer
+        ModelMeasure share = new ModelMeasure("Share", "[Measures].[Share]", false, DaxType.DECIMAL,
+                Optional.of(Set.of("[Customers].[Customers]")));
+        ModelMeasure average = new ModelMeasure("Avg Sales", "[Measures].[Avg Sales]");
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("State Province", 2), customerLevel("City", 3),
+                customerLevel("Name", 4)))), List.of(count, sales, cost, profit, growth, share, average));
+        String dax = """
+                EVALUATE CALCULATETABLE(ROW("P", 'Measures'[%1$s], "C", 'Measures'[Customer Count]),
+                    KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        VALUES('Customers'[Customers.Customers.State Province]))),
+                        VALUES('Customers'[Customers.Customers.City]))),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name])), %2$s))))""";
+        String both = "OR(NOT(ISBLANK('Measures'[%1$s])), NOT(ISBLANK('Measures'[Customer Count])))";
+        // Profit = Store Sales - Store Cost: of the customers where it is not BLANK, the same as of all
+        QueryPlan plan = bindCustomers(model, dax.formatted("Profit", both.formatted("Profit")));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Profit], [Measures].[Customer Count]} ON COLUMNS FROM [C]");
+        plan = bindCustomers(model, dax.formatted("Profit Growth", both.formatted("Profit Growth")));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo("SELECT {[Measures].[Profit Growth], [Measures].[Customer Count]} ON COLUMNS FROM [C]");
+        // of the customers kept, it is not the same of their parents
+        plan = bindCustomers(model, dax.formatted("Share", both.formatted("Share")));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .startsWith("SELECT {[Measures].[Share], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
+                        + "WHERE Generate(");
+        // the customers where Customer Count is BLANK are left out of it
+        plan = bindCustomers(model, dax.formatted("Profit", "NOT(ISBLANK('Measures'[Profit]))"));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .startsWith("SELECT {[Measures].[Profit], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
+                        + "WHERE Generate(");
+        // a quotient may change
+        plan = bindCustomers(model, dax.formatted("Avg Sales", both.formatted("Avg Sales")));
+        assertThat(MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table()).text())
+                .startsWith("SELECT {[Measures].[Avg Sales], [Measures].[Customer Count]} ON COLUMNS FROM [C] "
+                        + "WHERE Generate(");
     }
 
     @Test

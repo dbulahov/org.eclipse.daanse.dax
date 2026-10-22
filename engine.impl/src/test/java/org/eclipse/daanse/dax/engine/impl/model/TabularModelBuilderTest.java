@@ -20,9 +20,14 @@ import static org.eclipse.daanse.dax.engine.impl.OlapMocks.measure;
 import static org.eclipse.daanse.dax.engine.impl.OlapMocks.property;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
+import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.daanse.dax.engine.api.DaxType;
 import org.eclipse.daanse.olap.api.catalog.CatalogReader;
@@ -34,6 +39,20 @@ import org.eclipse.daanse.olap.api.element.Member;
 import org.eclipse.daanse.olap.api.element.Property;
 import org.eclipse.daanse.olap.api.element.StoredMeasure;
 import org.eclipse.daanse.olap.api.DataTypeJdbc;
+import org.eclipse.daanse.olap.api.function.FunctionDefinition;
+import org.eclipse.daanse.olap.api.function.ParenthesesFunction;
+import org.eclipse.daanse.olap.api.query.component.Expression;
+import org.eclipse.daanse.olap.api.query.component.HierarchyExpression;
+import org.eclipse.daanse.olap.api.query.component.NumericLiteral;
+import org.eclipse.daanse.olap.api.query.component.MemberExpression;
+import org.eclipse.daanse.olap.api.query.component.ResolvedFunCall;
+import org.eclipse.daanse.mdx.model.api.expression.operation.FunctionOperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.InfixOperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.MethodOperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.OperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.ParenthesesOperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.PlainPropertyOperationAtom;
+import org.eclipse.daanse.mdx.model.api.expression.operation.PrefixOperationAtom;
 import org.junit.jupiter.api.Test;
 
 class TabularModelBuilderTest {
@@ -156,5 +175,150 @@ class TabularModelBuilderTest {
         when(measure.getAggregateFunction()).thenReturn(aggregator);
         when(measure.getDataType()).thenReturn(dataType);
         return measure;
+    }
+
+    @Test
+    void sumsAndDifferencesOfStoredMeasuresAreDecomposed() {
+        Member a = storedMeasure("A");
+        Member b = storedMeasure("B");
+        Member c = storedMeasure("C");
+        Member profit = calculated("Profit", infix("-", member(a), member(b)));
+        Map<String, Member> cube = cube(a, b, c, profit);
+
+        assertThat(decomposed(profit, cube)).contains(Set.of());
+        assertThat(decomposed(calculated("S", infix("-", infix("+", member(a), member(b)), member(c))), cube))
+                .contains(Set.of());
+        assertThat(decomposed(calculated("Negated", call(new PrefixOperationAtom("-"),
+                mock(FunctionDefinition.class), member(a))), cube)).contains(Set.of());
+        assertThat(decomposed(calculated("Parenthesized", call(new ParenthesesOperationAtom(),
+                mock(ParenthesesFunction.class), infix("+", member(a), member(b)))), cube)).contains(Set.of());
+        // of another decomposed one
+        assertThat(decomposed(calculated("Total", infix("+", member(profit), member(c))), cube)).contains(Set.of());
+        assertThat(decomposed(calculated("First", call(new FunctionOperationAtom("CoalesceEmpty"),
+                mock(FunctionDefinition.class), member(a), member(b))), cube)).contains(Set.of());
+    }
+
+    @Test
+    void measuresBlankWhereAStoredMeasureTheyAreComputedOfIsNotAreNotDecomposed() {
+        Member a = storedMeasure("A");
+        Member b = storedMeasure("B");
+        Member c = storedMeasure("C");
+        Map<String, Member> cube = cube(a, b, c);
+
+        // BLANK where one of them is
+        assertThat(decomposed(calculated("Quotient", infix("/", member(a), member(b))), cube)).isEmpty();
+        assertThat(decomposed(calculated("Product", infix("*", member(a), member(b))), cube)).isEmpty();
+        // of a constant or a condition
+        Expression one = mock(Expression.class);
+        assertThat(decomposed(calculated("Plus one", infix("+", member(a), one)), cube)).isEmpty();
+        assertThat(decomposed(calculated("Conditional", call(new FunctionOperationAtom("IIf"),
+                mock(FunctionDefinition.class), member(a), member(b), member(c))), cube)).isEmpty();
+        // of a measure of another cube
+        assertThat(decomposed(calculated("Foreign", infix("+", member(a), member(storedMeasure("Other")))), cube))
+                .isEmpty();
+        // of itself
+        Member cyclic = measure("Cyclic");
+        when(cyclic.isCalculated()).thenReturn(true);
+        ResolvedFunCall itself = infix("+", member(a), member(cyclic));
+        when(cyclic.getExpression()).thenReturn(itself);
+        assertThat(decomposed(cyclic, cube(a, cyclic))).isEmpty();
+    }
+
+    @Test
+    void measuresOfOtherMembersAreDecomposedWithTheirHierarchies() {
+        Member sales = storedMeasure("Store Sales");
+        Member cost = storedMeasure("Store Cost");
+        Member profit = calculated("Profit", infix("-", member(sales), member(cost)));
+        Hierarchy time = hierarchy("Time", "[Time].[Time]");
+        Dimension timeDimension = dimension("Time", false);
+        when(time.getDimension()).thenReturn(timeDimension);
+        Expression previous = navigation("PrevMember", navigation("CurrentMember", current(time)));
+        Member lastPeriod = calculated("Profit last Period", call(new FunctionOperationAtom("CoalesceEmpty"),
+                mock(FunctionDefinition.class), tuple(member(profit), previous), member(profit)));
+        Member growth = calculated("Profit Growth",
+                infix("/", infix("-", member(profit), member(lastPeriod)), member(lastPeriod)));
+        Map<String, Member> cube = cube(sales, cost, profit, lastPeriod, growth);
+
+        // BLANK where Profit is, of the current and of the previous period
+        assertThat(decomposed(growth, cube)).contains(Set.of("[Time].[Time]"));
+        assertThat(decomposed(calculated("Lagged", infix("+", member(profit), tuple(member(profit),
+                call(new MethodOperationAtom("Lag"), mock(FunctionDefinition.class), current(time), number(2))))),
+                cube)).contains(Set.of("[Time].[Time]"));
+        // not BLANK where Profit of the previous period alone is not
+        assertThat(decomposed(calculated("Share", infix("/", member(profit), tuple(member(profit), previous))), cube))
+                .isEmpty();
+        // of another expression of a member
+        assertThat(decomposed(calculated("Other", infix("+", member(profit), tuple(member(profit),
+                call(new FunctionOperationAtom("StrToMember"), mock(FunctionDefinition.class), current(time))))),
+                cube)).isEmpty();
+    }
+
+    private static Optional<Set<String>> decomposed(Member measure, Map<String, Member> cube) {
+        return MeasureDecomposition.shiftedHierarchies(measure, cube);
+    }
+
+    private static Map<String, Member> cube(Member... measures) {
+        Map<String, Member> cube = new HashMap<>();
+        for (Member measure : measures) {
+            cube.put(measure.getUniqueName(), measure);
+        }
+        return cube;
+    }
+
+    private static Member storedMeasure(String name) {
+        Member member = measure(name);
+        when(member.isMeasure()).thenReturn(true);
+        return member;
+    }
+
+    private static Member calculated(String name, Expression expression) {
+        Member member = storedMeasure(name);
+        when(member.isCalculated()).thenReturn(true);
+        when(member.getExpression()).thenReturn(expression);
+        return member;
+    }
+
+    private static MemberExpression member(Member member) {
+        when(member.isMeasure()).thenReturn(true);
+        MemberExpression expression = mock(MemberExpression.class);
+        when(expression.getMember()).thenReturn(member);
+        return expression;
+    }
+
+    private static Expression current(Hierarchy hierarchy) {
+        HierarchyExpression expression = mock(HierarchyExpression.class,
+                withSettings().extraInterfaces(Expression.class));
+        when(expression.getHierarchy()).thenReturn(hierarchy);
+        return (Expression) expression;
+    }
+
+    private static Expression number(int value) {
+        NumericLiteral literal = mock(NumericLiteral.class, withSettings().extraInterfaces(Expression.class));
+        when(literal.getValue()).thenReturn(BigDecimal.valueOf(value));
+        return (Expression) literal;
+    }
+
+    private static ResolvedFunCall navigation(String name, Expression of) {
+        return call(new PlainPropertyOperationAtom(name), mock(FunctionDefinition.class), of);
+    }
+
+    private static ResolvedFunCall tuple(Expression... members) {
+        return call(new ParenthesesOperationAtom(), mock(FunctionDefinition.class), members);
+    }
+
+    private static ResolvedFunCall infix(String operator, Expression left, Expression right) {
+        return call(new InfixOperationAtom(operator), mock(FunctionDefinition.class), left, right);
+    }
+
+    private static ResolvedFunCall call(OperationAtom atom, FunctionDefinition function, Expression... args) {
+        ResolvedFunCall call = mock(ResolvedFunCall.class);
+        when(call.getOperationAtom()).thenReturn(atom);
+        when(call.getFunDef()).thenReturn(function);
+        when(call.getArgCount()).thenReturn(args.length);
+        when(call.getArgs()).thenReturn(args);
+        for (int i = 0; i < args.length; i++) {
+            when(call.getArg(i)).thenReturn(args[i]);
+        }
+        return call;
     }
 }
