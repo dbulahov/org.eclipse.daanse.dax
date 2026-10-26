@@ -380,9 +380,9 @@ class MdxGeneratorTest {
                     FILTER(KEEPFILTERS(VALUES('Markets'[Country])), NOT(ISBLANK([Sales]))))))
                 """).parseDaxStatement());
         MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
-        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE "
-                + "Generate([Date].[Year].Members, CrossJoin({[Date].CurrentMember}, "
-                + "Filter([Markets].[Country].Members, NOT IsEmpty([Measures].[Sales]))))");
+        assertThat(query.text()).isEqualTo(slicerMember("[Date]", "Generate([Date].[Year].Members, "
+                + "CrossJoin({[Date].CurrentMember}, Filter([Markets].[Country].Members, "
+                + "NOT IsEmpty([Measures].[Sales]))))", "SELECT {[Measures].[Sales]} ON COLUMNS FROM [C]"));
         assertThat(query.sources()).containsExactly(new CellValue(0));
     }
 
@@ -412,12 +412,12 @@ class MdxGeneratorTest {
                             OR(NOT(ISBLANK('Measures'[Sales])), NOT(ISBLANK('Measures'[Unit Sales])))))))
                 """).parseDaxStatement());
         MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
-        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales], [Measures].[Unit Sales]} ON COLUMNS "
-                + "FROM [C] WHERE Generate(Generate([Product].[Category].Members, "
-                + "CrossJoin({[Product].CurrentMember}, [Date].[Year].Members)), "
+        assertThat(query.text()).isEqualTo(slicerMember("[Product]", "Generate(Generate("
+                + "[Product].[Category].Members, CrossJoin({[Product].CurrentMember}, [Date].[Year].Members)), "
                 + "CrossJoin({[Date].CurrentMember}, Filter(Descendants([Product].CurrentMember, "
                 + "[Product].[Subcategory]), NOT IsEmpty([Measures].[Sales]) "
-                + "OR NOT IsEmpty([Measures].[Unit Sales]))))");
+                + "OR NOT IsEmpty([Measures].[Unit Sales]))))",
+                "SELECT {[Measures].[Sales], [Measures].[Unit Sales]} ON COLUMNS FROM [C]"));
     }
 
     @Test
@@ -457,12 +457,55 @@ class MdxGeneratorTest {
                         FILTER(KEEPFILTERS(VALUES('Product'[Name])), NOT(ISBLANK('Measures'[Sales]))))))
                 """).parseDaxStatement());
         MdxQuery query = MdxGenerator.summarize("[C]", (Summarize) plan.evaluates().get(0).table());
-        assertThat(query.text()).isEqualTo("SELECT {[Measures].[Sales]} ON COLUMNS FROM [C] WHERE "
-                + "Generate(Generate(Generate([Date].[Year].Members, "
-                + "CrossJoin({[Date].CurrentMember}, [Product].[Category].Members)), "
+        assertThat(query.text()).isEqualTo(slicerMember("[Date]", "Generate(Generate(Generate("
+                + "[Date].[Year].Members, CrossJoin({[Date].CurrentMember}, [Product].[Category].Members)), "
                 + "CrossJoin({[Date].CurrentMember}, Descendants([Product].CurrentMember, [Product].[Subcategory]))), "
                 + "CrossJoin({[Date].CurrentMember}, Filter(Descendants([Product].CurrentMember, [Product].[Name]), "
-                + "NOT IsEmpty([Measures].[Sales]))))");
+                + "NOT IsEmpty([Measures].[Sales]))))", "SELECT {[Measures].[Sales]} ON COLUMNS FROM [C]"));
+    }
+
+    @Test
+    void tuplesOfSeveralHierarchiesAreAMemberOfTheOneWhoseCurrentMemberIsTaken() throws Exception {
+        ModelMeasure sales = new ModelMeasure("Store Sales", "[Measures].[Store Sales]", true);
+        ModelMeasure cost = new ModelMeasure("Store Cost", "[Measures].[Store Cost]", true);
+        String previous = " at [Time].[Time].PrevMember";
+        // CoalesceEmpty(([Measures].[Profit], [Time].CurrentMember.PrevMember), [Measures].[Profit])
+        ModelMeasure lastPeriod = new ModelMeasure("Profit last Period", "[Measures].[Profit last Period]", false,
+                DaxType.DECIMAL, Optional.of(new MeasureDecomposition(
+                        Set.of(sales.uniqueName(), cost.uniqueName(), sales.uniqueName() + previous,
+                                cost.uniqueName() + previous),
+                        new MeasureDecomposition.Any(List.of(new MeasureDecomposition.Atom(sales.uniqueName()),
+                                new MeasureDecomposition.Atom(cost.uniqueName()),
+                                new MeasureDecomposition.Atom(sales.uniqueName() + previous),
+                                new MeasureDecomposition.Atom(cost.uniqueName() + previous))),
+                        Set.of("[Time].[Time]"), Set.of("[Time].[Time]"))));
+        ModelColumn storeType = new ModelColumn("Store Type", "Store Type.Store Type.Store Type",
+                "[Store Type].[Store Type]", "[Store Type].[Store Type].[Store Type]", 1, DaxType.STRING);
+        TabularModel model = new TabularModel("[Sales]",
+                List.of(new ModelTable("Time", List.of(time("Year", 1), time("Quarter", 2), time("Month", 3))),
+                        new ModelTable("Store Type", List.of(storeType))),
+                List.of(sales, cost, lastPeriod));
+        QueryPlan plan = new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser("""
+                EVALUATE CALCULATETABLE(ROW("P", 'Measures'[Profit last Period]),
+                    KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                                KEEPFILTERS(VALUES('Time'[Time.Time.Year])), VALUES('Time'[Time.Time.Quarter]))),
+                            VALUES('Time'[Time.Time.Month]))),
+                        FILTER(KEEPFILTERS(VALUES('Store Type'[Store Type.Store Type.Store Type])),
+                            NOT(ISBLANK('Measures'[Profit last Period]))))))
+                """).parseDaxStatement());
+        // several members of [Time] in the slicer would fail its CurrentMember
+        assertThat(MdxGenerator.summarize("[Sales]", (Summarize) plan.evaluates().get(0).table()).text())
+                .isEqualTo(slicerMember("[Time].[Time]", "Generate(Generate(Generate([Time].[Time].[Year].Members, "
+                        + "Descendants([Time].[Time].CurrentMember, [Time].[Time].[Quarter])), "
+                        + "Descendants([Time].[Time].CurrentMember, [Time].[Time].[Month])), "
+                        + "CrossJoin({[Time].[Time].CurrentMember}, Filter([Store Type].[Store Type].[Store Type].Members, "
+                        + "NOT IsEmpty([Measures].[Profit last Period]))))",
+                        "SELECT {[Measures].[Profit last Period]} ON COLUMNS FROM [Sales]"));
+    }
+
+    private static ModelColumn time(String level, int depth) {
+        return new ModelColumn("Time", "Time.Time." + level, "[Time].[Time]", "[Time].[Time].[" + level + "]", depth,
+                DaxType.STRING);
     }
 
     @Test

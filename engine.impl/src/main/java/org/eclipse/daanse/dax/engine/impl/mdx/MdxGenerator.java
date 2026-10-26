@@ -177,8 +177,10 @@ public final class MdxGenerator {
      * {@code [Employees].CurrentMember} of a calculated one, its members are a
      * calculated member aggregating them instead, which the measures are
      * computed over: one member is the current member, several in the slicer
-     * are not. The members of several hierarchies together are left as they
-     * are.
+     * are not. The tuples of several hierarchies together are a calculated
+     * member of one of them whose current member is taken, as
+     * {@code [Time].CurrentMember.PrevMember}, the others left at their
+     * default members.
      * </p>
      *
      * @param sliced   the filter tables, by the hierarchies they are on
@@ -189,14 +191,20 @@ public final class MdxGenerator {
             StringBuilder mdx) {
         List<String> sets = new ArrayList<>();
         List<String> members = new ArrayList<>();
+        Set<String> taken = new LinkedHashSet<>();
         for (Map.Entry<List<String>, List<TablePlan>> filters : sliced.entrySet()) {
             String set = intersection(filters.getValue());
-            if (filters.getKey().size() > 1
-                    || computed.stream().noneMatch(m -> m.takesCurrentMember(filters.getKey().getFirst()))) {
+            // the tuples of several hierarchies are one member of the first
+            // whose current member is taken, the others left at their default
+            Optional<String> hierarchy = filters.getKey().stream()
+                    .filter(h -> !taken.contains(h) && computed.stream().anyMatch(m -> m.takesCurrentMember(h)))
+                    .findFirst();
+            if (hierarchy.isEmpty()) {
                 sets.add(set);
                 continue;
             }
-            String member = filters.getKey().getFirst() + "." + MdxNames.quote("DAX slicer " + (members.size() + 1));
+            taken.add(hierarchy.get());
+            String member = hierarchy.get() + "." + MdxNames.quote("DAX slicer " + (members.size() + 1));
             // computed before the measures, as members of the hierarchy each
             mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(")
                     .append(set).append("), SOLVE_ORDER = -100");
