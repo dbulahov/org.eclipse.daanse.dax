@@ -292,7 +292,8 @@ public final class MdxGenerator {
      * of the hierarchy: the aggregate of the members of the deepest level of
      * them whose names and properties have the values; with filter tables on
      * the hierarchy, of the members of their deepest level they keep those
-     * under them.
+     * under them, or of them those under the members they keep if none is
+     * deeper.
      *
      * @param values  the values of each group, of the columns of the hierarchy
      *                grouped by, in their order
@@ -304,7 +305,9 @@ public final class MdxGenerator {
     private static String groupMembers(String hierarchy, List<List<Object>> values, List<ModelColumn> groupBy,
             List<TablePlan> filters, StringBuilder mdx, Map<ModelColumn, Map<String, Object>> byName) {
         List<ModelColumn> columns = groupBy.stream().filter(c -> c.hierarchy().equals(hierarchy)).toList();
-        String level = deepest(columns).get(hierarchy).level();
+        ModelColumn deepest = deepest(columns).get(hierarchy);
+        String level = deepest.level();
+        boolean deeper = filters.stream().anyMatch(f -> depth(f) > deepest.depth());
         columns.forEach(c -> byName.put(c, new LinkedHashMap<>()));
         StringJoiner set = new StringJoiner(", ", "{", "}");
         for (int g = 0; g < values.size(); g++) {
@@ -322,8 +325,10 @@ public final class MdxGenerator {
                 condition.add(columns.size() == 1 ? term : "(" + term + ")");
             }
             String members = "Filter(" + level + ".Members, " + condition + ")";
-            if (!filters.isEmpty()) {
+            if (deeper) {
                 members = "Exists(" + intersection(filters) + ", " + members + ")";
+            } else if (!filters.isEmpty()) {
+                members = "Exists(" + members + ", " + intersection(filters) + ")";
             }
             mdx.append(mdx.isEmpty() ? "WITH " : " ").append("MEMBER ").append(member).append(" AS Aggregate(")
                     .append(members).append(")");
