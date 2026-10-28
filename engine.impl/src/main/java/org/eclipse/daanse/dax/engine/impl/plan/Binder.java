@@ -799,7 +799,11 @@ public final class Binder {
             throw notSupported("a condition by measures on the columns of " + String.join(", ", byValues)
                     + ", grouped by the values of a property without its level");
         }
+        // the members of the groups are those of the values under the members the filters keep by their text
         for (TablePlan filter : summarize.filters()) {
+            if (!filtersByMeasure(filter)) {
+                continue;
+            }
             for (ModelColumn column : Summarize.filterColumns(filter)) {
                 if (byValues.contains(column.hierarchy())) {
                     throw notSupported("a filter table on " + column.daxName()
@@ -1178,6 +1182,9 @@ public final class Binder {
             new AddColumns(calculated(addColumns.source(), filters), addColumns.width(), addColumns.added());
         // constants are not filtered
         case ConstantTable constant -> constant;
+        // by a property without its level, the grouping by all its columns filtered as one
+        case Generate generate when computesByProperties(generate) && grouping(generate).isPresent() ->
+            calculated(grouping(generate).get(), filters);
         // the outer rows the filters keep, each joined with the inner ones computed for it
         case Generate generate -> {
             TablePlan outer = generate.outer();

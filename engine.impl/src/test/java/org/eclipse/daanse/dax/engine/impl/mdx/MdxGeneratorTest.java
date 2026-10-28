@@ -1460,6 +1460,51 @@ class MdxGeneratorTest {
     }
 
     @Test
+    void generateOfPropertyValuesFilteredOnAShallowerLevelAndAnotherTableIsTheirGrouping() throws Exception {
+        ModelColumn city = customerLevel("City", 3);
+        ModelColumn name = customerLevel("Name", 4);
+        ModelColumn education = new ModelColumn("Customers", "Customers.Customers.Name.Education", name.hierarchy(),
+                name.level(), 4, DaxType.STRING, Optional.of("Education"));
+        ModelColumn gender = new ModelColumn("Customers", "Customers.Customers.Name.Gender", name.hierarchy(),
+                name.level(), 4, DaxType.STRING, Optional.of("Gender"));
+        ModelColumn level = new ModelColumn("Education Level", "Education Level.Education Level.Education Level",
+                "[Education Level].[Education Level]", "[Education Level].[Education Level].[Education Level]", 1,
+                DaxType.STRING);
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers",
+                List.of(city, name, education, gender)), new ModelTable("Education Level", List.of(level))),
+                List.of(new ModelMeasure("Profit", "[Measures].[Profit]"),
+                        new ModelMeasure("Customer Count", "[Measures].[Customer Count]", true)));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name.Education])),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name.Gender])),
+                            OR(NOT(ISBLANK('Measures'[Profit])), NOT(ISBLANK('Measures'[Customer Count])))))),
+                        "MeasuresProfit", 'Measures'[Profit], "MeasuresCustomerCount", 'Measures'[Customer Count]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                        'Customers'[Customers.Customers.City] = "Albany")),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES(
+                            'Education Level'[Education Level.Education Level.Education Level])),
+                        'Education Level'[Education Level.Education Level.Education Level] = "Bachelors Degree")))""");
+        // the groups of the values of the customers of the city, their measures of the education level
+        Summarize groups = (Summarize) plan.evaluates().get(0).table();
+        assertThat(groups.groupBy()).containsExactly(education, gender);
+        assertThat(groups.byValues()).containsExactly("[Customers].[Customers]");
+        assertThat(MdxGenerator.summarize("[C]", groups, Map.of("[Customers].[Customers]",
+                List.of(List.of("Bachelors Degree", "F")))).text()).isEqualTo("WITH MEMBER [Customers].[Customers]."
+                        + "[DAX group 1] AS Aggregate(Exists(Filter([Customers].[Customers].[Name].Members, "
+                        + "([Customers].[Customers].CurrentMember.Properties(\"Education\") = \"Bachelors Degree\") "
+                        + "AND ([Customers].[Customers].CurrentMember.Properties(\"Gender\") = \"F\")), "
+                        + "Filter([Customers].[Customers].[City].Members, UCase([Customers].[Customers]."
+                        + "CurrentMember.Name) = \"ALBANY\"))) MEMBER [Education Level].[Education Level]."
+                        + "[DAX slicer 1] AS Aggregate(Filter([Education Level].[Education Level].[Education Level]."
+                        + "Members, UCase([Education Level].[Education Level].CurrentMember.Name) = "
+                        + "\"BACHELORS DEGREE\")), SOLVE_ORDER = -100 SELECT {[Measures].[Profit], "
+                        + "[Measures].[Customer Count]} ON COLUMNS, Filter({[Customers].[Customers].[DAX group 1]}, "
+                        + "NOT IsEmpty([Measures].[Profit]) OR NOT IsEmpty([Measures].[Customer Count])) ON ROWS "
+                        + "FROM [C] WHERE ([Education Level].[Education Level].[DAX slicer 1])");
+    }
+
+    @Test
     void groupsOfPropertyValuesHaveNoNamesToFilterOn() throws Exception {
         for (String[] dax : new String[][] {
                 { "EVALUATE FILTER(VALUES('Customers'[Customers.Customers.Name.Gender]), "
@@ -1468,7 +1513,7 @@ class MdxGeneratorTest {
                                 + "of a property without its level is not supported yet" },
                 { "EVALUATE SUMMARIZECOLUMNS('Customers'[Customers.Customers.Name.Gender], "
                         + "KEEPFILTERS(FILTER(VALUES('Customers'[Customers.Customers.City]), "
-                        + "'Customers'[Customers.Customers.City] = \"Paris\")), \"S\", [Sales])",
+                        + "[Sales] > 1)), \"S\", [Sales])",
                         "a filter table on Customers[Customers.Customers.City], grouped by the values of a property "
                                 + "without its level is not supported yet" },
                 // the outer rows kept by a measure the inner groups do not keep by
