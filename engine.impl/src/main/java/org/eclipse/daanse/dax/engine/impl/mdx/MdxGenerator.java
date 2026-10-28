@@ -383,7 +383,8 @@ public final class MdxGenerator {
      * @param generate the plan
      * @return the MDX query computing the plan's table: its rows are MDX
      *         {@code Generate} of the outer set, joining each of its tuples
-     *         with the inner set computed for it
+     *         with the inner set computed for it; the filter tables on
+     *         hierarchies of neither are the slicer
      */
     public static MdxQuery generate(String cube, Generate generate) {
         Summarize inner = generate.inner();
@@ -400,8 +401,20 @@ public final class MdxGenerator {
             sources.add(source(hierarchies.indexOf(column.hierarchy()), column));
         }
         StringBuilder mdx = new StringBuilder();
-        List<TablePlan> deeper = inner.filters();
+        List<TablePlan> deeper = new ArrayList<>();
+        Map<List<String>, List<TablePlan>> sliced = new LinkedHashMap<>();
+        for (TablePlan filter : inner.filters()) {
+            List<ModelColumn> columns = Summarize.filterColumns(filter);
+            if (columns.stream().anyMatch(c -> hierarchies.contains(c.hierarchy()))) {
+                deeper.add(filter);
+            } else {
+                sliced.computeIfAbsent(columns.stream().map(ModelColumn::hierarchy).distinct().toList(),
+                        h -> new ArrayList<>()).add(filter);
+            }
+        }
+        Set<ModelMeasure> computed = computedMeasures(inner);
         inner = inFilters(inner, deepest(grouped), deeper, mdx);
+        String slicer = slicer(sliced, computed, mdx);
         Measures measures = measures(inner, mdx, sources, false);
 
         String set = filterSet(generate.outer());
@@ -419,6 +432,9 @@ public final class MdxGenerator {
         }
         mdx.append("SELECT ").append(measures.all()).append(" ON COLUMNS, ").append(set).append(" ON ROWS FROM ")
                 .append(cube);
+        if (slicer != null) {
+            mdx.append(" WHERE ").append(slicer);
+        }
         return new MdxQuery(mdx.toString(), sources, true);
     }
 

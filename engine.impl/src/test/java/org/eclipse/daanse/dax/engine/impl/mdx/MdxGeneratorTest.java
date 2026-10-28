@@ -354,12 +354,16 @@ class MdxGeneratorTest {
     }
 
     @Test
-    void calculateTableOfGenerateFilteredOnOtherColumnsIsNotSupported() {
-        assertThatThrownBy(() -> new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
+    void calculateTableOfGenerateFilteredOnOtherTablesIsTheSlicer() throws Exception {
+        QueryPlan plan = new Binder(TestModel.model(), Map.of()).bind(new CCCDaxParserProvider().newParser("""
                 EVALUATE CALCULATETABLE(GENERATE(VALUES('Product'[Category]), VALUES('Date'[Year])),
                     FILTER(VALUES('Markets'[Country]), 'Markets'[Country] = "Canada"))
-                """).parseDaxStatement())).isInstanceOf(DaxSemanticException.class)
-                .hasMessageContaining("CALCULATETABLE of GENERATE filtered on columns other than of its first table");
+                """).parseDaxStatement());
+        // the values of other tables are not filtered by it
+        assertThat(MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table()).text()).isEqualTo(
+                "SELECT {} ON COLUMNS, Generate([Product].[Category].Members, CrossJoin({[Product].CurrentMember}, "
+                        + "[Date].[Year].Members)) ON ROWS FROM [C] WHERE Filter([Markets].[Country].Members, "
+                        + "UCase([Markets].CurrentMember.Name) = \"CANADA\")");
     }
 
     @Test
@@ -580,6 +584,40 @@ class MdxGeneratorTest {
 
     private static QueryPlan bindCustomers(TabularModel model, String dax) throws Exception {
         return new Binder(model, Map.of()).bind(new CCCDaxParserProvider().newParser(dax).parseDaxStatement());
+    }
+
+    @Test
+    void generateFilteredOnAnotherTableIsComputedInTheSlicer() throws Exception {
+        ModelColumn education = new ModelColumn("Education Level", "Education Level.Education Level.Education Level",
+                "[Education Level].[Education Level]", "[Education Level].[Education Level].[Education Level]", 1,
+                DaxType.STRING);
+        TabularModel model = new TabularModel("[C]", List.of(new ModelTable("Customers", List.of(
+                customerLevel("Country", 1), customerLevel("City", 3), customerLevel("Name", 4))),
+                new ModelTable("Education Level", List.of(education))),
+                List.of(new ModelMeasure("Profit", "[Measures].[Profit]")));
+        QueryPlan plan = bindCustomers(model, """
+                EVALUATE CALCULATETABLE(ADDCOLUMNS(KEEPFILTERS(GENERATE(KEEPFILTERS(GENERATE(
+                        KEEPFILTERS(VALUES('Customers'[Customers.Customers.Country])),
+                        VALUES('Customers'[Customers.Customers.City]))),
+                        FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.Name])),
+                            NOT(ISBLANK('Measures'[Profit]))))),
+                        "MeasuresProfit", 'Measures'[Profit]),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES('Customers'[Customers.Customers.City])),
+                        'Customers'[Customers.Customers.City] = "Albany")),
+                    KEEPFILTERS(FILTER(KEEPFILTERS(VALUES(
+                            'Education Level'[Education Level.Education Level.Education Level])),
+                        'Education Level'[Education Level.Education Level.Education Level] = "Bachelors Degree")))""");
+        // the values of the customers are not filtered by the education level, their profit is
+        assertThat(MdxGenerator.generate("[C]", (Generate) plan.evaluates().get(0).table()).text()).isEqualTo(
+                "WITH MEMBER [Education Level].[Education Level].[DAX slicer 1] AS Aggregate(Filter("
+                        + "[Education Level].[Education Level].[Education Level].Members, UCase([Education Level]."
+                        + "[Education Level].CurrentMember.Name) = \"BACHELORS DEGREE\")), SOLVE_ORDER = -100 "
+                        + "SELECT {[Measures].[Profit]} ON COLUMNS, Generate(Filter(Generate("
+                        + "[Customers].[Customers].[Country].Members, Descendants([Customers].[Customers]."
+                        + "CurrentMember, [Customers].[Customers].[City])), UCase([Customers].[Customers]."
+                        + "CurrentMember.Name) = \"ALBANY\"), Filter(Descendants([Customers].[Customers]."
+                        + "CurrentMember, [Customers].[Customers].[Name]), NOT IsEmpty([Measures].[Profit]))) "
+                        + "ON ROWS FROM [C] WHERE ([Education Level].[Education Level].[DAX slicer 1])");
     }
 
     @Test
