@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -1183,6 +1184,7 @@ public final class Binder {
             Summarize inner = generate.inner();
             List<ModelColumn> outerColumns = Summarize.filterColumns(outer);
             List<TablePlan> deeper = new ArrayList<>(inner.filters());
+            List<TablePlan> sliced = new ArrayList<>();
             for (TablePlan filter : filters) {
                 List<ModelColumn> columns = Summarize.filterColumns(filter);
                 // of the inner columns only: the outer rows without inner rows left are dropped by GENERATE
@@ -1190,6 +1192,8 @@ public final class Binder {
                     inner = restrictedInner(inner, filter);
                 } else if (deeperThanColumns(generate, filter)) {
                     deeper.add(filter);
+                } else if (onOtherTables(generate, filter)) {
+                    sliced.add(filter);
                 } else {
                     outer = restricted(outer, filter);
                 }
@@ -1205,12 +1209,31 @@ public final class Binder {
                     throw notSupported("CALCULATETABLE of GENERATE with calculated measures filtered on levels "
                             + "deeper than its columns");
                 }
+            }
+            // the filters on other tables restrict the measures only, the slicer
+            deeper.addAll(sliced);
+            if (deeper.size() > inner.filters().size()) {
                 inner = new Summarize(inner.groupBy(), inner.measures(), inner.condition(), inner.top(), deeper,
                         inner.added());
             }
             yield new Generate(outer, inner);
         }
         };
+    }
+
+    /**
+     * @param filter a filter table
+     * @return whether it is on the text of columns of tables other than those
+     *         of the {@code GENERATE}: their values are not filtered by it,
+     *         only the measures computed of its rows
+     */
+    private static boolean onOtherTables(Generate generate, TablePlan filter) {
+        if (!filterTableOnCube(filter)) {
+            return false;
+        }
+        Set<String> tables = new HashSet<>();
+        Summarize.filterColumns(generate).forEach(c -> tables.add(c.table()));
+        return Summarize.filterColumns(filter).stream().noneMatch(c -> tables.contains(c.table()));
     }
 
     /**
